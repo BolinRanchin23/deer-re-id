@@ -1,2 +1,19 @@
+# Existing repository-local files
 *.har
 .claude/
+.vercel/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Credentials
+.env
+.env.*
+
+# Downloaded camera data
+reveal-archive/

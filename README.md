@@ -2,6 +2,10 @@
 
 A comprehensive Home Assistant integration for Tactacam Reveal Cell Cam trail cameras, providing real-time access to photos and detailed statistics from all your cameras.
 
+## Standalone Downloader (No Home Assistant Required)
+
+This repository now includes a standalone, dependency-free downloader for archiving Reveal cloud photos and metadata directly to disk. See [DOWNLOADER.md](DOWNLOADER.md) for secure setup, commands, archive layout, and limitations.
+
 ## Features
 
 ### Camera Management
