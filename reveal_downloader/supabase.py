@@ -119,6 +119,7 @@ class SupabaseArchive:
         self.progress_downloaded = 0
         self.progress_skipped = 0
         self.progress_failed = 0
+        self.failure_stages: Dict[str, int] = {}
 
     def set_deadline(
         self,
@@ -156,6 +157,7 @@ class SupabaseArchive:
         self.progress_downloaded = 0
         self.progress_skipped = 0
         self.progress_failed = 0
+        self.failure_stages = {}
         page = 0
         seen_pages = set()
         while max_pages <= 0 or page < max_pages:
@@ -224,8 +226,10 @@ class SupabaseArchive:
                 except StorageError:
                     self.progress_failed += 1
                     raise
-                except (KeyError, OSError, RuntimeError, ValueError, TypeError):
+                except (KeyError, OSError, RuntimeError, ValueError, TypeError) as exc:
                     self.progress_failed += 1
+                    stage = _photo_failure_stage(exc)
+                    self.failure_stages[stage] = self.failure_stages.get(stage, 0) + 1
 
             if len(photos) < page_size:
                 break
@@ -445,6 +449,19 @@ def _safe_provider_code(response: StorageResponse) -> Optional[str]:
         if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", candidate):
             return candidate
     return None
+
+
+def _photo_failure_stage(exc: BaseException) -> str:
+    message = str(exc).lower()
+    if any(field in message for field in ("cameraid", "photoid", "photodateutc", "stable")):
+        return "photo_metadata"
+    if any(term in message for term in ("photourl", "photo url", "image download", "trusted")):
+        return "image_download"
+    if any(term in message for term in ("jpeg", "png", "image type")):
+        return "image_content"
+    if "read-back" in message or "verification" in message:
+        return "storage_verification"
+    return "photo_processing"
 
 
 def _path_suffix(path: str) -> str:

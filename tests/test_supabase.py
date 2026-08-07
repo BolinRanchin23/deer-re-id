@@ -85,6 +85,22 @@ class FakeRevealClient:
 
 
 class SupabaseArchiveTests(unittest.TestCase):
+    def test_individual_photo_failures_are_safely_categorized(self):
+        class RejectedImageClient(FakeRevealClient):
+            def download(self, url):
+                raise ValueError("photo URL host is not trusted")
+
+        archive = SupabaseArchive(
+            "https://project.supabase.co",
+            "sb_secret_test",
+            transport=FakeStorageTransport(),
+        )
+
+        result = archive.sync(RejectedImageClient(), max_pages=1)
+
+        self.assertEqual(result.failed, 1)
+        self.assertEqual(archive.failure_stages, {"image_download": 1})
+
     def test_missing_object_http_400_is_treated_as_absent(self):
         class SupabaseMissingObjectTransport(FakeStorageTransport):
             def request(self, method, url, *, headers=None, body=None, max_response_bytes=None):
