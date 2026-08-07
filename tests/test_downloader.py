@@ -41,6 +41,16 @@ class PhotoArchiveTests(unittest.TestCase):
         photo.update(overrides)
         return photo
 
+    def test_cloud_archive_path_uses_only_supabase_valid_key_characters(self):
+        path = relative_photo_path(self._photo()).as_posix()
+        allowed = set(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_/-.*'()! &$@=;:+,?"
+        )
+
+        self.assertLessEqual(set(path), allowed)
+        self.assertIn("@", path)
+        self.assertNotIn("~", path)
+
     def test_sync_archives_photo_and_metadata(self):
         photo = {
             "photoId": "photo-1",

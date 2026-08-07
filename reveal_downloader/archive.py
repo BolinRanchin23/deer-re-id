@@ -266,8 +266,8 @@ def _safe_component(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "unknown"
     cleaned = cleaned[:64]
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
-    # '~' is reserved because sanitization never emits it; every input is hashed.
-    return f"{cleaned}~{digest}"
+    # '@' is reserved because sanitization never emits it and Supabase permits it.
+    return f"{cleaned}@{digest}"
 
 
 def _parse_date(value: Any) -> datetime:

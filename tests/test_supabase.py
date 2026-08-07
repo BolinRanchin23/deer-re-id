@@ -422,7 +422,7 @@ class SupabaseArchiveTests(unittest.TestCase):
         self.assertEqual(result.downloaded, 1)
         uploaded = sorted(transport.objects)
         self.assertEqual(len(uploaded), 3)
-        self.assertTrue(uploaded[0].startswith("tactacam-photos/cam-1~"))
+        self.assertTrue(uploaded[0].startswith("tactacam-photos/cam-1@"))
         metadata_key = next(key for key in uploaded if key.endswith(".json"))
         self.assertEqual(json.loads(transport.objects[metadata_key])["photoId"], "p1")
         self.assertTrue(all("/rest/v1/" not in call[1] for call in transport.calls))

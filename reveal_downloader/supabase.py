@@ -396,7 +396,7 @@ class SupabaseArchive:
         prefix = f"{self.base_url}/storage/v1/object"
         if operation:
             prefix += f"/{operation}"
-        encoded = quote(f"{self.bucket}/{object_path}", safe="/")
+        encoded = quote(f"{self.bucket}/{object_path}", safe="/@")
         return f"{prefix}/{encoded}"
 
 
