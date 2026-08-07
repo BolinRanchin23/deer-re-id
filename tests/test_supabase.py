@@ -85,6 +85,33 @@ class FakeRevealClient:
 
 
 class SupabaseArchiveTests(unittest.TestCase):
+    def test_bucket_not_found_http_400_creates_private_bucket(self):
+        class MissingBucketTransport(FakeStorageTransport):
+            def request(self, method, url, *, headers=None, body=None, max_response_bytes=None):
+                if "/storage/v1/bucket/" in url and method == "GET":
+                    self.calls.append((method, url, headers or {}, body))
+                    return StorageResponse(400, b'{"message":"Bucket not found"}')
+                if url.endswith("/storage/v1/bucket") and method == "POST":
+                    self.calls.append((method, url, headers or {}, body))
+                    return StorageResponse(200, b'{}')
+                return super().request(
+                    method,
+                    url,
+                    headers=headers,
+                    body=body,
+                    max_response_bytes=max_response_bytes,
+                )
+
+        transport = MissingBucketTransport()
+        archive = SupabaseArchive(
+            "https://project.supabase.co", "sb_secret_test", transport=transport
+        )
+        archive.sync(FakeRevealClient(), max_pages=1)
+
+        creates = [call for call in transport.calls if call[0] == "POST" and call[1].endswith("/storage/v1/bucket")]
+        self.assertEqual(len(creates), 1)
+        self.assertFalse(json.loads(creates[0][3])["public"])
+
     @staticmethod
     def _photo():
         return {

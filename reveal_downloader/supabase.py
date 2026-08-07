@@ -309,7 +309,18 @@ class SupabaseArchive:
         response = self._transport.request(
             "GET", bucket_url, headers=self._headers, max_response_bytes=MAX_STORAGE_JSON_BYTES
         )
-        if response.status == 404:
+        bucket_missing = response.status == 404
+        if response.status == 400:
+            try:
+                error_payload = json.loads(response.body.decode("utf-8"))
+                error_text = " ".join(
+                    str(error_payload.get(field, ""))
+                    for field in ("error", "message")
+                ).lower()
+                bucket_missing = "bucket" in error_text and "not found" in error_text
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                bucket_missing = False
+        if bucket_missing:
             body = json.dumps(
                 {"id": self.bucket, "name": self.bucket, "public": False}
             ).encode("utf-8")
