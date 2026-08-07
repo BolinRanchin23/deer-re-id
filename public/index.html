@@ -143,8 +143,8 @@
     </section>
 
     <section class="section">
-      <div class="section-head"><div><h2>Recent photos</h2><p class="section-copy">Photo previews remain disabled and private.</p></div><div class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span>Private</span></div></div>
-      <div class="grid photos"><div class="card empty" style="grid-column:1/-1"><strong>Previews are disabled</strong>Archived photos are never served by this dashboard.</div></div>
+      <div class="section-head"><div><h2>Recent photos</h2><p class="section-copy">Photo previews are temporarily enabled through expiring private-storage proxy links.</p></div><div class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span>Temporary access</span></div></div>
+      <div id="preview-grid" class="grid photos"><div class="card empty" style="grid-column:1/-1"><strong>Loading previews</strong>Requesting short-lived image links.</div></div>
     </section>
   </main>
   <footer><div class="shell">DeerID · Private archive telemetry · Refreshes every 30 seconds</div></footer>
@@ -172,6 +172,13 @@
       });
     }
 
+    function renderPreviews(previews) {
+      const grid=$('preview-grid'); grid.replaceChildren();
+      const safe=previews.filter(item => item && typeof item.url==='string' && /^\/api\/preview\?token=[0-9a-f.]+$/.test(item.url)).slice(0,5);
+      if(!safe.length){ const empty=document.createElement('div'); empty.className='card empty'; empty.style.gridColumn='1/-1'; const strong=document.createElement('strong'); strong.textContent='No previews available'; empty.append(strong,'Run a successful synchronization to generate temporary previews.'); grid.appendChild(empty); return; }
+      safe.forEach(item=>{ const card=document.createElement('article'); card.className='card photo'; const image=document.createElement('img'); image.src=item.url; image.alt='Recent private Reveal photo'; image.loading='lazy'; image.referrerPolicy='no-referrer'; card.appendChild(image); if(item.captured_at){ const captured=document.createElement('time'); captured.dateTime=item.captured_at; captured.textContent=date(item.captured_at); card.appendChild(captured); } grid.appendChild(card); });
+    }
+
     async function refresh() {
       try {
         const response=await fetch('/api/status',{cache:'no-store'}); const data=await response.json();
@@ -182,6 +189,7 @@
         const verified=latest.verified || {}; $('images').textContent=n(verified.image); $('metadata').textContent=n(verified.metadata); $('checksums').textContent=n(verified.checksum);
         [['image-check',verified.image],['metadata-check',verified.metadata],['checksum-check',verified.checksum]].forEach(([id,count])=>{ const mark=$(id); const complete=n(count)>0; mark.className='check'+(complete?' verified':''); mark.textContent=complete?'✓':'·'; });
         renderRuns(Array.isArray(data.recent_runs)?data.recent_runs:[]);
+        renderPreviews(data.previews_enabled && Array.isArray(data.previews)?data.previews:[]);
       } catch (_) {
         setHealth('error'); $('updated').textContent='Durable status is temporarily unavailable'; $('error').textContent='The dashboard could not read its private status manifest. Synchronization remains fail-closed.'; $('error').style.display='block';
       }

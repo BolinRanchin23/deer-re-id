@@ -261,6 +261,14 @@ class SupabaseArchive:
             }
         )
 
+    def read_private_image(self, object_path: str, *, max_bytes: int) -> bytes:
+        """Read one bounded object while preserving private-bucket access."""
+        self._ensure_bucket()
+        body = self._download(object_path, max_bytes=max_bytes)
+        if body is None:
+            raise StorageError("Preview is unavailable")
+        return body
+
     def read_dashboard_runs(self, limit: int = 20) -> list[Dict[str, Any]]:
         """List and read bounded immutable run records, newest first."""
         self._ensure_bucket()
