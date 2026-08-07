@@ -408,11 +408,13 @@ def _is_missing_object_response(response: StorageResponse) -> bool:
         return False
     status_code = str(payload.get("statusCode", ""))
     error = str(payload.get("error", "")).lower()
+    code = str(payload.get("code", "")).lower()
     message = str(payload.get("message", "")).lower()
     return (
         status_code == "404"
         or error in {"not_found", "object_not_found"}
-        or "object not found" in message
+        or code in {"nosuchkey", "not_found", "object_not_found"}
+        or "not found" in message
     )
 
 
