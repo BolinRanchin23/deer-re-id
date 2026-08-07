@@ -146,9 +146,36 @@ class VercelSyncTests(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertEqual(
             payload,
-            {"ok": False, "error": "storage service failed", "storage_stage": "bucket_access"},
+            {
+                "ok": False,
+                "error": "storage service failed",
+                "storage_stage": "bucket_access",
+                "storage_http_status": 400,
+            },
         )
         self.assertNotIn("private storage detail", str(payload))
+
+    def test_object_read_failure_reports_only_safe_stage_and_http_status(self):
+        class ObjectReadFailingArchive(FakeArchive):
+            def sync(self, client, *, page_size, max_pages, deadline):
+                raise StorageError("Supabase object read failed with HTTP 400")
+
+        status, payload = handle_sync(
+            {
+                "CRON_SECRET": "cron-secret-at-least-16",
+                "TACTACAM_USERNAME": "person@example.com",
+                "TACTACAM_PASSWORD": "tactacam-secret",
+                "SUPABASE_URL": "https://project.supabase.co",
+                "SUPABASE_SECRET_KEY": "supabase-secret",
+            },
+            "Bearer cron-secret-at-least-16",
+            client_factory=FakeClient,
+            archive_factory=ObjectReadFailingArchive,
+        )
+
+        self.assertEqual(status, 502)
+        self.assertEqual(payload["storage_stage"], "object_read")
+        self.assertEqual(payload["storage_http_status"], 400)
 
     def test_request_with_wrong_cron_secret_is_rejected(self):
         status, payload = handle_sync(

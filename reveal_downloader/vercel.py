@@ -1,6 +1,7 @@
 """Pure request logic shared by the Vercel HTTP function and tests."""
 
 import hmac
+import re
 import time
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
@@ -80,11 +81,15 @@ def handle_sync(
         return 502, {"ok": False, "error": "Tactacam authentication failed"}
     except StorageError as exc:
         _record_failure(archive)
-        return 502, {
+        payload = {
             "ok": False,
             "error": "storage service failed",
             "storage_stage": _storage_stage(exc),
         }
+        http_status = _storage_http_status(exc)
+        if http_status is not None:
+            payload["storage_http_status"] = http_status
+        return 502, payload
     except RevealError:
         _record_failure(archive)
         return 502, {"ok": False, "error": "Reveal service failed"}
@@ -104,6 +109,11 @@ def _storage_stage(exc: StorageError) -> str:
     if "deadline" in message or "budget" in message:
         return "network_or_deadline"
     return "storage_access"
+
+
+def _storage_http_status(exc: StorageError) -> Optional[int]:
+    match = re.search(r"\bHTTP ([1-5][0-9]{2})\b", str(exc))
+    return int(match.group(1)) if match else None
 
 
 def _record_failure(archive: Any) -> None:
