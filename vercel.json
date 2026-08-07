@@ -5,11 +5,5 @@
       "maxDuration": 60,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     }
-  },
-  "crons": [
-    {
-      "path": "/api/sync",
-      "schedule": "0 5 * * *"
-    }
-  ]
+  }
 }

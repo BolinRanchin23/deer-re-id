@@ -2,13 +2,19 @@
 
 from dataclasses import dataclass
 import hashlib
+import hmac
 import json
-from typing import Any, Dict, Optional
+import re
+import time
+from typing import Any, Callable, Dict, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .archive import SyncResult, relative_photo_path
+from .archive import SyncResult, detected_image_extension, relative_photo_path
+
+DEFAULT_STORAGE_TIMEOUT = 8.0
+MIN_REQUEST_BUDGET = 0.1
 
 
 class StorageError(RuntimeError):
@@ -24,6 +30,28 @@ class StorageResponse:
 class StorageTransport:
     """Minimal HTTP transport for Supabase Storage."""
 
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._deadline: Optional[float] = None
+
+    def set_deadline(
+        self,
+        deadline: Optional[float],
+        *,
+        clock: Optional[Callable[[], float]] = None,
+    ) -> None:
+        self._deadline = deadline
+        if clock is not None:
+            self._clock = clock
+
+    def _timeout(self) -> float:
+        if self._deadline is None:
+            return DEFAULT_STORAGE_TIMEOUT
+        remaining = self._deadline - self._clock()
+        if remaining < MIN_REQUEST_BUDGET:
+            raise StorageError("Vercel sync deadline reached")
+        return min(DEFAULT_STORAGE_TIMEOUT, remaining)
+
     def request(
         self,
         method: str,
@@ -34,7 +62,7 @@ class StorageTransport:
     ) -> StorageResponse:
         request = Request(url, data=body, headers=headers or {}, method=method)
         try:
-            with urlopen(request, timeout=60) as response:
+            with urlopen(request, timeout=self._timeout()) as response:
                 return StorageResponse(response.status, response.read())
         except HTTPError as exc:
             return StorageResponse(exc.code, exc.read())
@@ -60,10 +88,9 @@ class SupabaseArchive:
         if not self.bucket:
             raise ValueError("Supabase bucket name is required")
         self._transport = transport or StorageTransport()
-        self._headers = {
-            "Authorization": f"Bearer {secret_key}",
-            "apikey": secret_key,
-        }
+        self._headers = {"apikey": secret_key}
+        if secret_key.count(".") == 2:
+            self._headers["Authorization"] = f"Bearer {secret_key}"
         self._bucket_ready = False
 
     def sync(
@@ -73,12 +100,25 @@ class SupabaseArchive:
         camera_id: Optional[str] = None,
         page_size: int = 100,
         max_pages: int = 2,
+        deadline: Optional[float] = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> SyncResult:
+        def check_deadline() -> None:
+            _check_deadline(deadline, clock)
+
+        check_deadline()
+        transport_deadline = getattr(self._transport, "set_deadline", None)
+        if callable(transport_deadline):
+            transport_deadline(deadline, clock=clock)
+        client_deadline = getattr(client, "set_deadline", None)
+        if callable(client_deadline):
+            client_deadline(deadline, clock=clock)
         self._ensure_bucket()
         downloaded = skipped = failed = 0
         page = 0
         seen_pages = set()
         while max_pages <= 0 or page < max_pages:
+            check_deadline()
             photos = client.get_photos(size=page_size, page=page, camera_id=camera_id)
             if not photos:
                 break
@@ -91,23 +131,44 @@ class SupabaseArchive:
             seen_pages.add(fingerprint)
 
             for photo in photos:
-                image_path = relative_photo_path(photo).as_posix()
-                checksum_path = _replace_suffix(image_path, ".sha256")
-                if self._exists(checksum_path):
-                    skipped += 1
-                    continue
                 try:
+                    check_deadline()
+                    image_path = relative_photo_path(photo).as_posix()
+                    metadata_path = _replace_suffix(image_path, ".json")
+                    checksum_path = _replace_suffix(image_path, ".sha256")
+                    marker = self._download(checksum_path)
+                    if marker is not None:
+                        check_deadline()
+                        image_body = self._download(image_path)
+                        check_deadline()
+                        metadata_body = self._download(metadata_path)
+                        if _cloud_entry_complete(
+                            marker, image_body, metadata_body, photo, image_path
+                        ):
+                            skipped += 1
+                            continue
+                        check_deadline()
+                        # Invalidate the commit record before any repair can fail.
+                        self._delete(checksum_path)
                     photo_url = photo.get("photoUrl")
                     if not photo_url:
                         raise ValueError("photo has no photoUrl")
+                    check_deadline()
                     image = client.download(photo_url)
+                    if detected_image_extension(image) != _path_suffix(image_path):
+                        raise ValueError("downloaded image type does not match object extension")
                     metadata = json.dumps(photo, indent=2, sort_keys=True).encode("utf-8")
                     checksum = (hashlib.sha256(image).hexdigest() + "\n").encode("ascii")
+                    check_deadline()
                     self._upload(image_path, image, _content_type(image_path))
-                    self._upload(_replace_suffix(image_path, ".json"), metadata, "application/json")
+                    check_deadline()
+                    self._upload(metadata_path, metadata, "application/json")
                     # The checksum is the completion marker and must be uploaded last.
+                    check_deadline()
                     self._upload(checksum_path, checksum, "text/plain")
                     downloaded += 1
+                except StorageError:
+                    raise
                 except (KeyError, OSError, RuntimeError, ValueError, TypeError):
                     failed += 1
 
@@ -136,14 +197,21 @@ class SupabaseArchive:
             raise StorageError(f"Supabase bucket setup failed with HTTP {response.status}")
         self._bucket_ready = True
 
-    def _exists(self, object_path: str) -> bool:
-        url = self._object_url("info", object_path)
+    def _download(self, object_path: str) -> Optional[bytes]:
+        url = self._object_url("authenticated", object_path)
         response = self._transport.request("GET", url, headers=self._headers)
         if response.status == 200:
-            return True
+            return response.body
         if response.status == 404:
-            return False
-        raise StorageError(f"Supabase object check failed with HTTP {response.status}")
+            return None
+        raise StorageError(f"Supabase object read failed with HTTP {response.status}")
+
+    def _delete(self, object_path: str) -> None:
+        response = self._transport.request(
+            "DELETE", self._object_url("", object_path), headers=self._headers
+        )
+        if response.status not in {200, 204, 404}:
+            raise StorageError(f"Supabase object delete failed with HTTP {response.status}")
 
     def _upload(self, object_path: str, body: bytes, content_type: str) -> None:
         headers = {
@@ -172,7 +240,14 @@ def _project_origin(value: str) -> str:
     parts = urlsplit(candidate)
     if not parts.scheme or not parts.netloc:
         raise ValueError("A valid Supabase project URL is required")
+    if parts.scheme.lower() != "https":
+        raise ValueError("Supabase project URL must use HTTPS")
     return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+
+
+def _path_suffix(path: str) -> str:
+    filename = path.rsplit("/", 1)[-1]
+    return "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
 
 def _replace_suffix(path: str, suffix: str) -> str:
@@ -188,6 +263,33 @@ def _content_type(path: str) -> str:
         return "image/jpeg"
     if lowered.endswith(".png"):
         return "image/png"
-    if lowered.endswith(".webp"):
-        return "image/webp"
     return "application/octet-stream"
+
+
+def _cloud_entry_complete(
+    marker: bytes,
+    image: Optional[bytes],
+    metadata: Optional[bytes],
+    photo: Dict[str, Any],
+    image_path: str,
+) -> bool:
+    if image is None or metadata is None or re.fullmatch(rb"[0-9a-f]{64}\n", marker) is None:
+        return False
+    try:
+        stored_metadata = json.loads(metadata.decode("utf-8"))
+        if detected_image_extension(image) != _path_suffix(image_path):
+            return False
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return False
+    expected = marker[:-1].decode("ascii")
+    actual = hashlib.sha256(image).hexdigest()
+    return (
+        isinstance(stored_metadata, dict)
+        and stored_metadata == photo
+        and hmac.compare_digest(expected, actual)
+    )
+
+
+def _check_deadline(deadline: Optional[float], clock: Callable[[], float]) -> None:
+    if deadline is not None and deadline - clock() < MIN_REQUEST_BUDGET:
+        raise StorageError("Vercel sync deadline reached")

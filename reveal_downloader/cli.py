@@ -12,6 +12,20 @@ from .archive import PhotoArchive
 from .client import AuthenticationError, RevealClient, RevealError
 
 
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return number
+
+
+def _nonnegative_int(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="reveal-downloader",
@@ -31,10 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
         add_login_arguments(command)
         command.add_argument("--output", type=Path, default=Path("reveal-archive"))
         command.add_argument("--camera-id")
-        command.add_argument("--page-size", type=int, default=100)
+        command.add_argument("--page-size", type=_positive_int, default=100)
         command.add_argument(
             "--max-pages",
-            type=int,
+            type=_nonnegative_int,
             default=0,
             help="Maximum pages per run; 0 downloads until the API returns no more",
         )
@@ -56,6 +70,7 @@ def run(
     *,
     client_factory: Callable[[str, str], Any] = RevealClient,
     password_reader: Callable[[str], str] = getpass,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> int:
     args = build_parser().parse_args(argv)
     password = os.environ.get("TACTACAM_PASSWORD") or password_reader(
@@ -85,8 +100,13 @@ def run(
             return _sync_once(archive, client, args)
 
         while True:
-            _sync_once(archive, client, args)
-            time.sleep(max(1, args.interval))
+            try:
+                _sync_once(archive, client, args)
+            except AuthenticationError:
+                raise
+            except RevealError as exc:
+                print(f"Transient Reveal API error: {exc}; retrying.", file=sys.stderr)
+            sleeper(max(1, args.interval))
     except KeyboardInterrupt:
         print("Stopped.")
         return 0
