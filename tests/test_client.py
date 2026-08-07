@@ -43,6 +43,26 @@ class FakeTransport:
 
 
 class RevealClientTests(unittest.TestCase):
+    def test_download_allows_reveal_managed_s3_photo_host_only(self):
+        class ImageTransport(FakeTransport):
+            def bytes_request(self, url):
+                return b"\xff\xd8image\xff\xd9"
+
+        client = RevealClient("person@example.com", "secret", transport=ImageTransport())
+        reveal_s3_url = (
+            "https://ftp-us-east-1-1373ee1d-b093-4e43-bde8-5f2a21b88d7d."
+            "s3.us-east-1.amazonaws.com/photo.jpg"
+        )
+
+        self.assertEqual(client.download(reveal_s3_url), b"\xff\xd8image\xff\xd9")
+        for url in (
+            "https://attacker-bucket.s3.us-east-1.amazonaws.com/photo.jpg",
+            "https://ftp-us-east-1-not-a-uuid.s3.us-east-1.amazonaws.com/photo.jpg",
+            "https://ftp-us-east-1-1373ee1d-b093-4e43-bde8-5f2a21b88d7d.s3.eu-west-1.amazonaws.com/photo.jpg",
+        ):
+            with self.subTest(url=url), self.assertRaises(RevealError):
+                client.download(url)
+
     def test_pinned_connection_uses_numeric_address_without_dns_lookup(self):
         connection = _PinnedHTTPSConnection(
             "images.reveal.ishareit.net", "93.184.216.34", 1.0

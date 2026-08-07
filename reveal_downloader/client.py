@@ -6,6 +6,7 @@ import ipaddress
 import json
 import math
 import queue
+import re
 import socket
 import ssl
 import threading
@@ -20,6 +21,10 @@ COGNITO_CLIENT_ID = "6r9tpojvgvkci5trla0ip14mon"
 API_BASE_URL = "https://api.reveal.ishareit.net/v1"
 USER_AGENT = "RevealWeb/5.4.0"
 TRUSTED_PHOTO_HOST_SUFFIX = ".reveal.ishareit.net"
+TRUSTED_REVEAL_S3_HOST = re.compile(
+    r"ftp-us-east-1-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"\.s3\.us-east-1\.amazonaws\.com"
+)
 MAX_TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_HTTP_TIMEOUT = 8.0
 MIN_REQUEST_BUDGET = 0.1
@@ -382,5 +387,6 @@ def _validate_photo_url(url: str) -> None:
     if not (
         hostname == TRUSTED_PHOTO_HOST_SUFFIX[1:]
         or hostname.endswith(TRUSTED_PHOTO_HOST_SUFFIX)
+        or TRUSTED_REVEAL_S3_HOST.fullmatch(hostname)
     ):
         raise RevealError("Photo URL host is not a trusted Reveal host")
