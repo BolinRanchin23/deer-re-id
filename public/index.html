@@ -165,7 +165,9 @@
       if (!runs.length) { const row=body.insertRow(); const cell=row.insertCell(); cell.colSpan=5; cell.className='empty'; cell.textContent='No synchronization runs have been recorded yet.'; return; }
       runs.forEach(run => {
         const row=body.insertRow();
-        const values=[date(run.finished_at), run.status || 'unknown', n(run.downloaded), n(run.skipped), n(run.failed)];
+        const verified=run.verified || {};
+        const verifiedUnits=Math.min(n(verified.image),n(verified.metadata),n(verified.checksum));
+        const values=[date(run.finished_at), run.status || 'unknown', n(run.downloaded), verifiedUnits, n(run.failed)];
         values.forEach((value,index)=>{ const cell=row.insertCell(); if(index===1){ const pill=document.createElement('span'); pill.className='status-pill '+value; pill.textContent=value; cell.appendChild(pill); } else cell.textContent=value; });
       });
     }

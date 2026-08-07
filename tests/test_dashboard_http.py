@@ -22,6 +22,8 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertNotIn("Fort McKavett", html)
         self.assertIn("Photo previews remain disabled and private", html)
         self.assertNotIn('<span class="check">✓</span>', html)
+        self.assertIn("Math.min(n(verified.image),n(verified.metadata),n(verified.checksum))", html)
+        self.assertNotIn("n(run.downloaded), n(run.skipped), n(run.failed)", html)
 
     def test_vercel_config_sets_static_dashboard_security_headers_without_cron(self):
         config = json.loads(Path("vercel.json").read_text(encoding="utf-8"))
