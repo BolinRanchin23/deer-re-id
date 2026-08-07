@@ -37,7 +37,8 @@ class FakeArchive:
 class VercelSyncTests(unittest.TestCase):
     def test_degraded_sync_reports_safe_photo_failure_categories(self):
         class DegradedArchive(FakeArchive):
-            failure_stages = {"image_download": 2}
+            failure_stages = {"image_host": 2}
+            failure_hosts = {"cdn.example.test": 2}
 
             def sync(self, client, *, page_size, max_pages, deadline):
                 from reveal_downloader.archive import SyncResult
@@ -58,7 +59,8 @@ class VercelSyncTests(unittest.TestCase):
         )
 
         self.assertEqual(status, 207)
-        self.assertEqual(payload["failure_stages"], {"image_download": 2})
+        self.assertEqual(payload["failure_stages"], {"image_host": 2})
+        self.assertEqual(payload["failure_hosts"], {"cdn.example.test": 2})
 
     def test_authorized_request_runs_cloud_sync(self):
         environ = {

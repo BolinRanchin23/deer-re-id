@@ -99,7 +99,8 @@ class SupabaseArchiveTests(unittest.TestCase):
         result = archive.sync(RejectedImageClient(), max_pages=1)
 
         self.assertEqual(result.failed, 1)
-        self.assertEqual(archive.failure_stages, {"image_download": 1})
+        self.assertEqual(archive.failure_stages, {"image_host": 1})
+        self.assertEqual(archive.failure_hosts, {"example.test": 1})
 
     def test_missing_object_http_400_is_treated_as_absent(self):
         class SupabaseMissingObjectTransport(FakeStorageTransport):

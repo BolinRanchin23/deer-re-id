@@ -120,6 +120,7 @@ class SupabaseArchive:
         self.progress_skipped = 0
         self.progress_failed = 0
         self.failure_stages: Dict[str, int] = {}
+        self.failure_hosts: Dict[str, int] = {}
 
     def set_deadline(
         self,
@@ -158,6 +159,7 @@ class SupabaseArchive:
         self.progress_skipped = 0
         self.progress_failed = 0
         self.failure_stages = {}
+        self.failure_hosts = {}
         page = 0
         seen_pages = set()
         while max_pages <= 0 or page < max_pages:
@@ -230,6 +232,14 @@ class SupabaseArchive:
                     self.progress_failed += 1
                     stage = _photo_failure_stage(exc)
                     self.failure_stages[stage] = self.failure_stages.get(stage, 0) + 1
+                    if stage == "image_host":
+                        hostname = urlsplit(str(photo.get("photoUrl") or "")).hostname
+                        if (
+                            hostname
+                            and len(self.failure_hosts) < 10
+                            and re.fullmatch(r"[A-Za-z0-9.-]{1,253}", hostname)
+                        ):
+                            self.failure_hosts[hostname] = self.failure_hosts.get(hostname, 0) + 1
 
             if len(photos) < page_size:
                 break
@@ -455,7 +465,9 @@ def _photo_failure_stage(exc: BaseException) -> str:
     message = str(exc).lower()
     if any(field in message for field in ("cameraid", "photoid", "photodateutc", "stable")):
         return "photo_metadata"
-    if any(term in message for term in ("photourl", "photo url", "image download", "trusted")):
+    if "trusted" in message:
+        return "image_host"
+    if any(term in message for term in ("photourl", "photo url", "image download")):
         return "image_download"
     if any(term in message for term in ("jpeg", "png", "image type")):
         return "image_content"

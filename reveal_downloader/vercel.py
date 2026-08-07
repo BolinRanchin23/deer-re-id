@@ -75,6 +75,7 @@ def handle_sync(
             "skipped": result.skipped,
             "failed": result.failed,
             "failure_stages": dict(getattr(archive, "failure_stages", {})),
+            "failure_hosts": dict(getattr(archive, "failure_hosts", {})),
             "status_recorded": status_recorded,
         }
     except AuthenticationError:
