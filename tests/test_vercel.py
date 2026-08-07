@@ -128,7 +128,7 @@ class VercelSyncTests(unittest.TestCase):
     def test_storage_failure_is_reported_separately_without_details(self):
         class FailingStorageArchive(FakeArchive):
             def sync(self, client, *, page_size, max_pages, deadline):
-                raise StorageError("private storage detail")
+                raise StorageError("Supabase bucket setup failed with HTTP 400")
 
         status, payload = handle_sync(
             {
@@ -144,7 +144,10 @@ class VercelSyncTests(unittest.TestCase):
         )
 
         self.assertEqual(status, 502)
-        self.assertEqual(payload, {"ok": False, "error": "storage service failed"})
+        self.assertEqual(
+            payload,
+            {"ok": False, "error": "storage service failed", "storage_stage": "bucket_access"},
+        )
         self.assertNotIn("private storage detail", str(payload))
 
     def test_request_with_wrong_cron_secret_is_rejected(self):
