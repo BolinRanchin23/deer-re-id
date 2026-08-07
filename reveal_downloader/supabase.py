@@ -24,6 +24,17 @@ _STATUS_OBJECT_NAME = re.compile(r"\A\d{8}T\d{6}Z-[0-9a-f]{32}\.json\Z")
 class StorageError(RuntimeError):
     """A Supabase Storage operation failed."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: Optional[int] = None,
+        provider_code: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+        self.provider_code = provider_code
+
 
 @dataclass(frozen=True)
 class StorageResponse:
@@ -354,7 +365,11 @@ class SupabaseArchive:
             return response.body
         if response.status == 404 or _is_missing_object_response(response):
             return None
-        raise StorageError(f"Supabase object read failed with HTTP {response.status}")
+        raise StorageError(
+            f"Supabase object read failed with HTTP {response.status}",
+            http_status=response.status,
+            provider_code=_safe_provider_code(response),
+        )
 
     def _delete(self, object_path: str) -> None:
         response = self._transport.request(
@@ -416,6 +431,20 @@ def _is_missing_object_response(response: StorageResponse) -> bool:
         or code in {"nosuchkey", "not_found", "object_not_found"}
         or "not found" in message
     )
+
+
+def _safe_provider_code(response: StorageResponse) -> Optional[str]:
+    try:
+        payload = json.loads(response.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for field in ("code", "error", "statusCode"):
+        candidate = str(payload.get(field, "")).strip().replace(" ", "_")
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", candidate):
+            return candidate
+    return None
 
 
 def _path_suffix(path: str) -> str:

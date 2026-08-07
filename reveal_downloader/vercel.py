@@ -86,9 +86,12 @@ def handle_sync(
             "error": "storage service failed",
             "storage_stage": _storage_stage(exc),
         }
-        http_status = _storage_http_status(exc)
+        http_status = getattr(exc, "http_status", None) or _storage_http_status(exc)
         if http_status is not None:
             payload["storage_http_status"] = http_status
+        provider_code = getattr(exc, "provider_code", None)
+        if provider_code:
+            payload["storage_provider_code"] = provider_code
         return 502, payload
     except RevealError:
         _record_failure(archive)

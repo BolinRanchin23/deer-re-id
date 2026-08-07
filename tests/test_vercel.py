@@ -158,7 +158,11 @@ class VercelSyncTests(unittest.TestCase):
     def test_object_read_failure_reports_only_safe_stage_and_http_status(self):
         class ObjectReadFailingArchive(FakeArchive):
             def sync(self, client, *, page_size, max_pages, deadline):
-                raise StorageError("Supabase object read failed with HTTP 400")
+                raise StorageError(
+                    "Supabase object read failed with HTTP 400",
+                    http_status=400,
+                    provider_code="InvalidRequest",
+                )
 
         status, payload = handle_sync(
             {
@@ -176,6 +180,7 @@ class VercelSyncTests(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertEqual(payload["storage_stage"], "object_read")
         self.assertEqual(payload["storage_http_status"], 400)
+        self.assertEqual(payload["storage_provider_code"], "InvalidRequest")
 
     def test_request_with_wrong_cron_secret_is_rejected(self):
         status, payload = handle_sync(
