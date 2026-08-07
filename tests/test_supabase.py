@@ -238,7 +238,7 @@ class SupabaseArchiveTests(unittest.TestCase):
                 with self.assertRaisesRegex(StorageError, "private"):
                     archive.read_dashboard_runs()
 
-    def test_modern_secret_key_is_not_sent_as_bearer_token(self):
+    def test_modern_secret_key_sends_required_storage_authorization(self):
         transport = FakeStorageTransport()
         archive = SupabaseArchive(
             "https://project.supabase.co",
@@ -251,7 +251,7 @@ class SupabaseArchiveTests(unittest.TestCase):
         self.assertTrue(transport.calls)
         for _, _, headers, _ in transport.calls:
             self.assertEqual(headers.get("apikey"), "sb_secret_test")
-            self.assertNotIn("Authorization", headers)
+            self.assertEqual(headers.get("Authorization"), "Bearer sb_secret_test")
 
     def test_sync_rejects_image_magic_that_disagrees_with_object_extension(self):
         cases = (

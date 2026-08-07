@@ -99,9 +99,10 @@ class SupabaseArchive:
         if not self.bucket:
             raise ValueError("Supabase bucket name is required")
         self._transport = transport or StorageTransport()
-        self._headers = {"apikey": secret_key}
-        if secret_key.count(".") == 2:
-            self._headers["Authorization"] = f"Bearer {secret_key}"
+        self._headers = {
+            "apikey": secret_key,
+            "Authorization": f"Bearer {secret_key}",
+        }
         self._bucket_ready = False
         self.last_archive_units = []
         self.progress_downloaded = 0
