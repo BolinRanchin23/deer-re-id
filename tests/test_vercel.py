@@ -2,6 +2,7 @@ import time
 import unittest
 
 from reveal_downloader.client import RevealError
+from reveal_downloader.supabase import StorageError
 from reveal_downloader.vercel import handle_sync
 
 
@@ -116,13 +117,35 @@ class VercelSyncTests(unittest.TestCase):
         )
 
         self.assertEqual(status, 502)
-        self.assertEqual(payload, {"ok": False, "error": "upstream service failed"})
+        self.assertEqual(payload, {"ok": False, "error": "Reveal service failed"})
         self.assertEqual(FailingArchive.saved_run["status"], "error")
         self.assertEqual(FailingArchive.saved_run["downloaded"], 2)
         self.assertEqual(FailingArchive.saved_run["skipped"], 1)
         self.assertEqual(FailingArchive.saved_run["failed"], 1)
         self.assertEqual(len(FailingArchive.saved_run["recent_units"]), 1)
         self.assertNotIn("secret upstream detail", str(FailingArchive.saved_run))
+
+    def test_storage_failure_is_reported_separately_without_details(self):
+        class FailingStorageArchive(FakeArchive):
+            def sync(self, client, *, page_size, max_pages, deadline):
+                raise StorageError("private storage detail")
+
+        status, payload = handle_sync(
+            {
+                "CRON_SECRET": "cron-secret-at-least-16",
+                "TACTACAM_USERNAME": "person@example.com",
+                "TACTACAM_PASSWORD": "tactacam-secret",
+                "SUPABASE_URL": "https://project.supabase.co",
+                "SUPABASE_SECRET_KEY": "supabase-secret",
+            },
+            "Bearer cron-secret-at-least-16",
+            client_factory=FakeClient,
+            archive_factory=FailingStorageArchive,
+        )
+
+        self.assertEqual(status, 502)
+        self.assertEqual(payload, {"ok": False, "error": "storage service failed"})
+        self.assertNotIn("private storage detail", str(payload))
 
     def test_request_with_wrong_cron_secret_is_rejected(self):
         status, payload = handle_sync(

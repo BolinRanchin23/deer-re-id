@@ -78,9 +78,12 @@ def handle_sync(
     except AuthenticationError:
         _record_failure(archive)
         return 502, {"ok": False, "error": "Tactacam authentication failed"}
-    except (RevealError, StorageError):
+    except StorageError:
         _record_failure(archive)
-        return 502, {"ok": False, "error": "upstream service failed"}
+        return 502, {"ok": False, "error": "storage service failed"}
+    except RevealError:
+        _record_failure(archive)
+        return 502, {"ok": False, "error": "Reveal service failed"}
     except ValueError:
         _record_failure(archive)
         return 503, {"ok": False, "error": "invalid environment configuration"}
