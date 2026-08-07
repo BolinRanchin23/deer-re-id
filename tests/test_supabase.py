@@ -14,22 +14,37 @@ from reveal_downloader.supabase import (
 
 
 class FakeStorageTransport:
-    def __init__(self, existing=None):
+    def __init__(self, existing=None, bucket_body=b'{"public":false}'):
         self.objects = dict(existing or {})
         self.calls = []
+        self.bucket_body = bucket_body
 
     def set_deadline(self, deadline, clock=None):
         self.deadline = deadline
         self.clock = clock
 
-    def request(self, method, url, *, headers=None, body=None):
+    def request(self, method, url, *, headers=None, body=None, max_response_bytes=None):
         self.calls.append((method, url, headers or {}, body))
         if "/storage/v1/bucket/" in url:
-            return StorageResponse(200, b"{}")
+            return StorageResponse(200, self.bucket_body)
+        marker = "/storage/v1/object/list/"
+        if marker in url and method == "POST":
+            bucket = url.split(marker, 1)[1]
+            options = json.loads(body)
+            prefix = options["prefix"].strip("/") + "/"
+            names = [
+                key[len(bucket) + len(prefix) + 1:]
+                for key in self.objects
+                if key.startswith(f"{bucket}/{prefix}")
+            ]
+            names.sort(reverse=True)
+            return StorageResponse(200, json.dumps([{"name": name} for name in names[:options["limit"]]]).encode())
         marker = "/storage/v1/object/authenticated/"
         if marker in url and method == "GET":
             object_path = url.split(marker, 1)[1]
             if object_path in self.objects:
+                if max_response_bytes is not None and len(self.objects[object_path]) > max_response_bytes:
+                    raise StorageError("response exceeds size limit")
                 return StorageResponse(200, self.objects[object_path])
             return StorageResponse(404, b"{}")
         marker = "/storage/v1/object/"
@@ -98,6 +113,19 @@ class SupabaseArchiveTests(unittest.TestCase):
             StorageTransport().request("GET", "https://project.supabase.co/storage")
 
         self.assertLessEqual(mocked.call_args.kwargs["timeout"], 8)
+
+    def test_storage_transport_bounds_success_and_error_response_reads(self):
+        with patch("reveal_downloader.supabase.urlopen") as mocked:
+            response = mocked.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b"12345"
+
+            with self.assertRaisesRegex(StorageError, "size"):
+                StorageTransport().request(
+                    "GET", "https://project.supabase.co/storage", max_response_bytes=4
+                )
+
+            response.read.assert_called_once_with(5)
 
     def test_storage_transport_uses_remaining_deadline_and_refuses_tiny_budget(self):
         now = [10.0]
@@ -199,6 +227,17 @@ class SupabaseArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "HTTPS"):
             SupabaseArchive("http://project.supabase.co", "sb_secret_test")
 
+    def test_existing_bucket_must_explicitly_be_private(self):
+        for body in (b'{"public":true}', b"{}", b"not-json", b'[{"public":false}]'):
+            with self.subTest(body=body):
+                archive = SupabaseArchive(
+                    "https://project.supabase.co",
+                    "test-key",
+                    transport=FakeStorageTransport(bucket_body=body),
+                )
+                with self.assertRaisesRegex(StorageError, "private"):
+                    archive.read_dashboard_runs()
+
     def test_modern_secret_key_is_not_sent_as_bearer_token(self):
         transport = FakeStorageTransport()
         archive = SupabaseArchive(
@@ -231,6 +270,55 @@ class SupabaseArchiveTests(unittest.TestCase):
                 self.assertEqual(result.downloaded, 0)
                 self.assertEqual(transport.objects, {})
 
+    def test_new_upload_is_not_counted_until_all_objects_read_back_and_verify(self):
+        class CorruptingTransport(FakeStorageTransport):
+            def request(self, method, url, **kwargs):
+                response = super().request(method, url, **kwargs)
+                if method == "POST" and url.endswith(".sha256"):
+                    image_key = next(key for key in self.objects if key.endswith(".jpg"))
+                    self.objects[image_key] = b"corrupt-after-upload"
+                return response
+
+        transport = CorruptingTransport()
+        archive = SupabaseArchive(
+            "https://project.supabase.co", "test-key", transport=transport
+        )
+
+        result = archive.sync(FakeRevealClient(), max_pages=1)
+
+        self.assertEqual(result.downloaded, 0)
+        self.assertEqual(result.failed, 1)
+        self.assertEqual(archive.last_archive_units, [])
+        self.assertFalse(any(key.endswith(".sha256") for key in transport.objects))
+
+    def test_sync_exposes_committed_progress_when_later_storage_call_aborts(self):
+        first = self._photo()
+        second = {**first, "photoId": "p2", "photoUrl": "https://example.test/p2.jpg"}
+
+        class TwoPhotoClient(FakeRevealClient):
+            def get_photos(self, *, size, page, camera_id=None):
+                return [first, second] if page == 0 else []
+
+        second_marker = relative_photo_path(second).with_suffix(".sha256").as_posix()
+
+        class AbortingTransport(FakeStorageTransport):
+            def request(self, method, url, **kwargs):
+                if method == "GET" and url.endswith(second_marker):
+                    raise StorageError("storage interrupted")
+                return super().request(method, url, **kwargs)
+
+        archive = SupabaseArchive(
+            "https://project.supabase.co", "test-key", transport=AbortingTransport()
+        )
+
+        with self.assertRaisesRegex(StorageError, "interrupted"):
+            archive.sync(TwoPhotoClient(), max_pages=1)
+
+        self.assertEqual(archive.progress_downloaded, 1)
+        self.assertEqual(archive.progress_skipped, 0)
+        self.assertEqual(archive.progress_failed, 1)
+        self.assertEqual(len(archive.last_archive_units), 1)
+
     def test_sync_uploads_image_metadata_and_checksum(self):
         transport = FakeStorageTransport()
         archive = SupabaseArchive(
@@ -250,6 +338,10 @@ class SupabaseArchiveTests(unittest.TestCase):
         metadata_key = next(key for key in uploaded if key.endswith(".json"))
         self.assertEqual(json.loads(transport.objects[metadata_key])["photoId"], "p1")
         self.assertTrue(all("/rest/v1/" not in call[1] for call in transport.calls))
+        expected_image_path = relative_photo_path(client.photo).as_posix()
+        self.assertEqual(len(archive.last_archive_units), 1)
+        self.assertEqual(archive.last_archive_units[0]["object_path"], expected_image_path)
+        self.assertEqual(archive.last_archive_units[0]["captured_at"], "2026-08-06T12:00:00Z")
 
     def test_sync_skips_photo_when_checksum_marker_exists(self):
         _, _, objects = self._valid_objects()
@@ -370,7 +462,39 @@ class SupabaseArchiveTests(unittest.TestCase):
         for _, _, headers, _ in private_calls:
             self.assertEqual(headers["apikey"], "legacy.jwt.key")
             self.assertEqual(headers["Authorization"], "Bearer legacy.jwt.key")
+    def test_dashboard_runs_are_immutable_private_objects_listed_newest_first(self):
+        transport = FakeStorageTransport()
+        archive = SupabaseArchive(
+            "https://project.supabase.co", "test-key", transport=transport
+        )
+        older = {"version": 1, "id": "a" * 32, "finished_at": "2026-08-07T10:00:00Z"}
+        newer = {"version": 1, "id": "b" * 32, "finished_at": "2026-08-07T11:00:00Z"}
 
+        self.assertEqual(archive.read_dashboard_runs(), [])
+        archive.write_dashboard_run(older)
+        archive.write_dashboard_run(newer)
+
+        self.assertEqual(archive.read_dashboard_runs(), [newer, older])
+        status_keys = [key for key in transport.objects if key.startswith("tactacam-photos/_status/runs/")]
+        self.assertEqual(len(status_keys), 2)
+        writes = [
+            call
+            for call in transport.calls
+            if call[0] == "POST" and "/storage/v1/object/" in call[1]
+            and "/storage/v1/object/list/" not in call[1]
+        ]
+        self.assertEqual(writes[-1][2]["Content-Type"], "application/json")
+        self.assertEqual(writes[-1][2]["x-upsert"], "false")
+
+    def test_oversized_dashboard_run_fails_closed(self):
+        object_path = "tactacam-photos/_status/runs/20260807T100000Z-" + "a" * 32 + ".json"
+        transport = FakeStorageTransport({object_path: b"x" * (64 * 1024 + 1)})
+        archive = SupabaseArchive(
+            "https://project.supabase.co", "test-key", transport=transport
+        )
+
+        with self.assertRaisesRegex(StorageError, "size"):
+            archive.read_dashboard_runs()
 
 if __name__ == "__main__":
     unittest.main()

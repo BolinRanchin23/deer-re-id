@@ -1,0 +1,32 @@
+name: Manual Production Sync
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deerid-production-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Trigger one bounded Reveal sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Invoke secured production endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          status="$(curl --silent --show-error \
+            --output response.json \
+            --write-out '%{http_code}' \
+            --max-time 75 \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            https://deer-re-id.vercel.app/api/sync)"
+          python -m json.tool response.json
+          test "$status" -ge 200
+          test "$status" -lt 300

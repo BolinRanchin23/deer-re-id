@@ -5,6 +5,7 @@ import time
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from .client import AuthenticationError, RevealClient, RevealError
+from .dashboard import record_dashboard_run
 from .supabase import StorageError, SupabaseArchive
 
 
@@ -42,6 +43,7 @@ def handle_sync(
             "missing": missing,
         }
 
+    archive = None
     try:
         page_size = _bounded_int(environ.get("REVEAL_PAGE_SIZE"), 100, 1, 1000)
         max_pages = _bounded_int(environ.get("REVEAL_MAX_PAGES"), 2, 1, 100)
@@ -59,18 +61,64 @@ def handle_sync(
             max_pages=max_pages,
             deadline=time.monotonic() + 45,
         )
+        status_recorded = _record_status(
+            archive,
+            status="healthy" if result.failed == 0 else "degraded",
+            downloaded=result.downloaded,
+            skipped=result.skipped,
+            failed=result.failed,
+        )
         return (200 if result.failed == 0 else 207), {
             "ok": result.failed == 0,
             "downloaded": result.downloaded,
             "skipped": result.skipped,
             "failed": result.failed,
+            "status_recorded": status_recorded,
         }
     except AuthenticationError:
+        _record_failure(archive)
         return 502, {"ok": False, "error": "Tactacam authentication failed"}
     except (RevealError, StorageError):
+        _record_failure(archive)
         return 502, {"ok": False, "error": "upstream service failed"}
     except ValueError:
+        _record_failure(archive)
         return 503, {"ok": False, "error": "invalid environment configuration"}
+
+
+def _record_failure(archive: Any) -> None:
+    if archive is None:
+        return
+    _record_status(
+        archive,
+        status="error",
+        downloaded=getattr(archive, "progress_downloaded", 0),
+        skipped=getattr(archive, "progress_skipped", 0),
+        failed=max(1, getattr(archive, "progress_failed", 0)),
+    )
+
+
+def _record_status(
+    archive: Any,
+    *,
+    status: str,
+    downloaded: int,
+    skipped: int,
+    failed: int,
+) -> bool:
+    try:
+        record_dashboard_run(
+            archive,
+            status=status,
+            downloaded=downloaded,
+            skipped=skipped,
+            failed=failed,
+            archive_units=getattr(archive, "last_archive_units", ()),
+        )
+        return True
+    except (OSError, RuntimeError, TypeError, ValueError, StorageError):
+        # Telemetry must never replace the endpoint's true synchronization result.
+        return False
 
 
 def _bounded_int(value: Optional[str], default: int, minimum: int, maximum: int) -> int:

@@ -15,6 +15,10 @@ from .archive import SyncResult, detected_image_extension, relative_photo_path
 
 DEFAULT_STORAGE_TIMEOUT = 8.0
 MIN_REQUEST_BUDGET = 0.1
+MAX_STORAGE_RESPONSE_BYTES = 32 * 1024 * 1024
+MAX_STORAGE_JSON_BYTES = 64 * 1024
+MAX_STATUS_RECORD_BYTES = 64 * 1024
+_STATUS_OBJECT_NAME = re.compile(r"\A\d{8}T\d{6}Z-[0-9a-f]{32}\.json\Z")
 
 
 class StorageError(RuntimeError):
@@ -59,13 +63,20 @@ class StorageTransport:
         *,
         headers: Optional[Dict[str, str]] = None,
         body: Optional[bytes] = None,
+        max_response_bytes: int = MAX_STORAGE_RESPONSE_BYTES,
     ) -> StorageResponse:
         request = Request(url, data=body, headers=headers or {}, method=method)
         try:
             with urlopen(request, timeout=self._timeout()) as response:
-                return StorageResponse(response.status, response.read())
+                response_body = response.read(max_response_bytes + 1)
+                if len(response_body) > max_response_bytes:
+                    raise StorageError("Supabase response exceeds size limit")
+                return StorageResponse(response.status, response_body)
         except HTTPError as exc:
-            return StorageResponse(exc.code, exc.read())
+            response_body = exc.read(max_response_bytes + 1)
+            if len(response_body) > max_response_bytes:
+                raise StorageError("Supabase response exceeds size limit")
+            return StorageResponse(exc.code, response_body)
         except (URLError, TimeoutError) as exc:
             raise StorageError(f"Could not reach Supabase Storage: {exc}") from exc
 
@@ -92,6 +103,21 @@ class SupabaseArchive:
         if secret_key.count(".") == 2:
             self._headers["Authorization"] = f"Bearer {secret_key}"
         self._bucket_ready = False
+        self.last_archive_units = []
+        self.progress_downloaded = 0
+        self.progress_skipped = 0
+        self.progress_failed = 0
+
+    def set_deadline(
+        self,
+        deadline: Optional[float],
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Apply one shared serverless deadline to all Storage requests."""
+        transport_deadline = getattr(self._transport, "set_deadline", None)
+        if callable(transport_deadline):
+            transport_deadline(deadline, clock=clock)
 
     def sync(
         self,
@@ -114,7 +140,10 @@ class SupabaseArchive:
         if callable(client_deadline):
             client_deadline(deadline, clock=clock)
         self._ensure_bucket()
-        downloaded = skipped = failed = 0
+        self.last_archive_units = []
+        self.progress_downloaded = 0
+        self.progress_skipped = 0
+        self.progress_failed = 0
         page = 0
         seen_pages = set()
         while max_pages <= 0 or page < max_pages:
@@ -145,7 +174,8 @@ class SupabaseArchive:
                         if _cloud_entry_complete(
                             marker, image_body, metadata_body, photo, image_path
                         ):
-                            skipped += 1
+                            self.progress_skipped += 1
+                            self._remember_unit(image_path, photo)
                             continue
                         check_deadline()
                         # Invalidate the commit record before any repair can fail.
@@ -166,22 +196,118 @@ class SupabaseArchive:
                     # The checksum is the completion marker and must be uploaded last.
                     check_deadline()
                     self._upload(checksum_path, checksum, "text/plain")
-                    downloaded += 1
+                    check_deadline()
+                    stored_image = self._download(image_path)
+                    check_deadline()
+                    stored_metadata = self._download(metadata_path)
+                    check_deadline()
+                    stored_marker = self._download(checksum_path)
+                    if stored_marker is None or not _cloud_entry_complete(
+                        stored_marker, stored_image, stored_metadata, photo, image_path
+                    ):
+                        self._delete(checksum_path)
+                        raise ValueError("uploaded archive unit failed read-back verification")
+                    self.progress_downloaded += 1
+                    self._remember_unit(image_path, photo)
                 except StorageError:
+                    self.progress_failed += 1
                     raise
                 except (KeyError, OSError, RuntimeError, ValueError, TypeError):
-                    failed += 1
+                    self.progress_failed += 1
 
             if len(photos) < page_size:
                 break
             page += 1
-        return SyncResult(downloaded=downloaded, skipped=skipped, failed=failed)
+        return SyncResult(
+            downloaded=self.progress_downloaded,
+            skipped=self.progress_skipped,
+            failed=self.progress_failed,
+        )
+
+    def _remember_unit(self, image_path: str, photo: Dict[str, Any]) -> None:
+        if len(self.last_archive_units) >= 10:
+            return
+        captured_at = photo.get("photoDateUtc")
+        self.last_archive_units.append(
+            {
+                "object_path": image_path,
+                "captured_at": captured_at if isinstance(captured_at, str) else "",
+            }
+        )
+
+    def read_dashboard_runs(self, limit: int = 20) -> list[Dict[str, Any]]:
+        """List and read bounded immutable run records, newest first."""
+        self._ensure_bucket()
+        bounded_limit = max(1, min(20, int(limit)))
+        request_body = json.dumps(
+            {
+                "prefix": "_status/runs",
+                "limit": bounded_limit,
+                "offset": 0,
+                "sortBy": {"column": "name", "order": "desc"},
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        response = self._transport.request(
+            "POST",
+            f"{self.base_url}/storage/v1/object/list/{quote(self.bucket, safe='')}",
+            headers={**self._headers, "Content-Type": "application/json"},
+            body=request_body,
+            max_response_bytes=MAX_STORAGE_JSON_BYTES,
+        )
+        if response.status != 200:
+            raise StorageError(f"Supabase status list failed with HTTP {response.status}")
+        try:
+            entries = json.loads(response.body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise StorageError("Dashboard status is unavailable") from exc
+        if not isinstance(entries, list) or len(entries) > bounded_limit:
+            raise StorageError("Dashboard status is unavailable")
+        runs = []
+        for entry in entries:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if not isinstance(name, str) or _STATUS_OBJECT_NAME.fullmatch(name) is None:
+                raise StorageError("Dashboard status is unavailable")
+            body = self._download(
+                f"_status/runs/{name}", max_bytes=MAX_STATUS_RECORD_BYTES
+            )
+            if body is None:
+                raise StorageError("Dashboard status is unavailable")
+            try:
+                run = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise StorageError("Dashboard status is unavailable") from exc
+            if not isinstance(run, dict):
+                raise StorageError("Dashboard status is unavailable")
+            runs.append(run)
+        return runs
+
+    def write_dashboard_run(self, run: Dict[str, Any]) -> None:
+        """Persist one run under a unique immutable private object name."""
+        self._ensure_bucket()
+        finished_at = run.get("finished_at")
+        run_id = run.get("id")
+        if not isinstance(finished_at, str) or not isinstance(run_id, str):
+            raise StorageError("Dashboard run is invalid")
+        compact = finished_at.replace("-", "").replace(":", "")
+        name = f"{compact}-{run_id}.json"
+        if _STATUS_OBJECT_NAME.fullmatch(name) is None:
+            raise StorageError("Dashboard run is invalid")
+        body = json.dumps(run, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(body) > MAX_STATUS_RECORD_BYTES:
+            raise StorageError("Dashboard run exceeds size limit")
+        self._upload(
+            f"_status/runs/{name}", body, "application/json", upsert=False
+        )
+
 
     def _ensure_bucket(self) -> None:
         if self._bucket_ready:
             return
         bucket_url = f"{self.base_url}/storage/v1/bucket/{quote(self.bucket, safe='')}"
-        response = self._transport.request("GET", bucket_url, headers=self._headers)
+        response = self._transport.request(
+            "GET", bucket_url, headers=self._headers, max_response_bytes=MAX_STORAGE_JSON_BYTES
+        )
         if response.status == 404:
             body = json.dumps(
                 {"id": self.bucket, "name": self.bucket, "public": False}
@@ -192,14 +318,26 @@ class SupabaseArchive:
                 f"{self.base_url}/storage/v1/bucket",
                 headers=headers,
                 body=body,
+                max_response_bytes=MAX_STORAGE_JSON_BYTES,
             )
+        elif response.status == 200:
+            try:
+                bucket = json.loads(response.body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise StorageError("Supabase bucket must explicitly be private") from exc
+            if not isinstance(bucket, dict) or bucket.get("public") is not False:
+                raise StorageError("Supabase bucket must explicitly be private")
         if response.status not in {200, 201}:
             raise StorageError(f"Supabase bucket setup failed with HTTP {response.status}")
         self._bucket_ready = True
 
-    def _download(self, object_path: str) -> Optional[bytes]:
+    def _download(
+        self, object_path: str, *, max_bytes: int = MAX_STORAGE_RESPONSE_BYTES
+    ) -> Optional[bytes]:
         url = self._object_url("authenticated", object_path)
-        response = self._transport.request("GET", url, headers=self._headers)
+        response = self._transport.request(
+            "GET", url, headers=self._headers, max_response_bytes=max_bytes
+        )
         if response.status == 200:
             return response.body
         if response.status == 404:
@@ -213,11 +351,13 @@ class SupabaseArchive:
         if response.status not in {200, 204, 404}:
             raise StorageError(f"Supabase object delete failed with HTTP {response.status}")
 
-    def _upload(self, object_path: str, body: bytes, content_type: str) -> None:
+    def _upload(
+        self, object_path: str, body: bytes, content_type: str, *, upsert: bool = True
+    ) -> None:
         headers = {
             **self._headers,
             "Content-Type": content_type,
-            "x-upsert": "true",
+            "x-upsert": "true" if upsert else "false",
         }
         response = self._transport.request(
             "POST", self._object_url("", object_path), headers=headers, body=body

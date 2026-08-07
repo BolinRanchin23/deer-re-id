@@ -1,6 +1,7 @@
 import time
 import unittest
 
+from reveal_downloader.client import RevealError
 from reveal_downloader.vercel import handle_sync
 
 
@@ -12,14 +13,24 @@ class FakeClient:
 
 class FakeArchive:
     deadline = None
+    saved_run = None
 
     def __init__(self, url, key, bucket):
         self.settings = (url, key, bucket)
+        self.last_archive_units = [
+            {"object_path": "camera/recent.jpg", "captured_at": "2026-08-07T10:00:00Z"}
+        ]
+        self.progress_downloaded = 0
+        self.progress_skipped = 0
+        self.progress_failed = 0
 
     def sync(self, client, *, page_size, max_pages, deadline):
         from reveal_downloader.archive import SyncResult
         type(self).deadline = deadline
         return SyncResult(downloaded=2, skipped=3, failed=0)
+
+    def write_dashboard_run(self, run):
+        type(self).saved_run = run
 
 
 class VercelSyncTests(unittest.TestCase):
@@ -50,6 +61,68 @@ class VercelSyncTests(unittest.TestCase):
         assert isinstance(deadline, float)
         self.assertGreater(deadline, time.monotonic())
         self.assertLessEqual(deadline - time.monotonic(), 45)
+        self.assertTrue(payload["status_recorded"])
+        self.assertIsNotNone(FakeArchive.saved_run)
+        self.assertEqual(FakeArchive.saved_run["status"], "healthy")
+        self.assertEqual(
+            FakeArchive.saved_run["recent_units"][0]["object_path"],
+            "camera/recent.jpg",
+        )
+
+    def test_status_recording_failure_does_not_change_successful_sync_result(self):
+        class TelemetryFailingArchive(FakeArchive):
+            def write_dashboard_run(self, run):
+                raise RuntimeError("telemetry unavailable")
+
+        status, payload = handle_sync(
+            {
+                "CRON_SECRET": "cron-secret-at-least-16",
+                "TACTACAM_USERNAME": "person@example.com",
+                "TACTACAM_PASSWORD": "tactacam-secret",
+                "SUPABASE_URL": "https://project.supabase.co",
+                "SUPABASE_SECRET_KEY": "supabase-secret",
+            },
+            "Bearer cron-secret-at-least-16",
+            client_factory=FakeClient,
+            archive_factory=TelemetryFailingArchive,
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["status_recorded"])
+
+    def test_upstream_failure_is_recorded_without_exposing_details(self):
+        class FailingArchive(FakeArchive):
+            def sync(self, client, *, page_size, max_pages, deadline):
+                self.progress_downloaded = 2
+                self.progress_skipped = 1
+                self.progress_failed = 1
+                raise RevealError("secret upstream detail")
+
+        environ = {
+            "CRON_SECRET": "cron-secret-at-least-16",
+            "TACTACAM_USERNAME": "person@example.com",
+            "TACTACAM_PASSWORD": "tactacam-secret",
+            "SUPABASE_URL": "https://project.supabase.co",
+            "SUPABASE_SECRET_KEY": "supabase-secret",
+        }
+        FailingArchive.saved_run = None
+
+        status, payload = handle_sync(
+            environ,
+            "Bearer cron-secret-at-least-16",
+            client_factory=FakeClient,
+            archive_factory=FailingArchive,
+        )
+
+        self.assertEqual(status, 502)
+        self.assertEqual(payload, {"ok": False, "error": "upstream service failed"})
+        self.assertEqual(FailingArchive.saved_run["status"], "error")
+        self.assertEqual(FailingArchive.saved_run["downloaded"], 2)
+        self.assertEqual(FailingArchive.saved_run["skipped"], 1)
+        self.assertEqual(FailingArchive.saved_run["failed"], 1)
+        self.assertEqual(len(FailingArchive.saved_run["recent_units"]), 1)
+        self.assertNotIn("secret upstream detail", str(FailingArchive.saved_run))
 
     def test_request_with_wrong_cron_secret_is_rejected(self):
         status, payload = handle_sync(

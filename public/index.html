@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>DeerID Operations</title>
+  <style>
+    :root {
+      --bg: #0f1110;
+      --surface: #151816;
+      --surface-2: #1a1e1b;
+      --border: #2a2f2b;
+      --border-strong: #3a423c;
+      --text: #f3f5f3;
+      --muted: #919a93;
+      --green: #3ecf8e;
+      --green-soft: rgba(62, 207, 142, .11);
+      --amber: #e8b55b;
+      --red: #ee7777;
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 50% -20%, rgba(62,207,142,.09), transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    .shell { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
+    header {
+      position: sticky; top: 0; z-index: 10;
+      border-bottom: 1px solid rgba(42,47,43,.8);
+      background: rgba(15,17,16,.82);
+      backdrop-filter: blur(18px);
+    }
+    nav { height: 66px; display: flex; align-items: center; justify-content: space-between; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 600; letter-spacing: -.02em; }
+    .mark { width: 27px; height: 27px; color: var(--green); }
+    .nav-meta { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 4px rgba(145,154,147,.08); }
+    .pulse.healthy { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+    .pulse.degraded { background: var(--amber); }
+    .pulse.error { background: var(--red); }
+    main { padding: 64px 0 80px; }
+    .eyebrow { margin: 0 0 14px; color: var(--green); font: 500 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 0; max-width: 760px; font-size: clamp(38px, 6vw, 66px); font-weight: 450; line-height: 1.02; letter-spacing: -.055em; }
+    .lede { max-width: 660px; margin: 22px 0 0; color: var(--muted); font-size: 17px; }
+    .updated { margin-top: 22px; color: #c2c8c3; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .grid { display: grid; gap: 14px; }
+    .metrics { grid-template-columns: repeat(4, 1fr); margin-top: 46px; }
+    .card { border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(145deg, rgba(26,30,27,.94), rgba(21,24,22,.94)); }
+    .metric { min-height: 132px; padding: 19px; }
+    .metric-label { color: var(--muted); font-size: 12px; }
+    .metric-value { margin-top: 12px; font-size: 31px; line-height: 1; letter-spacing: -.04em; }
+    .metric-detail { margin-top: 13px; color: #b7beb8; font-size: 12px; }
+    .section { margin-top: 52px; }
+    .section-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 16px; }
+    h2 { margin: 0; font-size: 21px; font-weight: 500; letter-spacing: -.025em; }
+    .section-copy { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .integrity { grid-template-columns: repeat(3, 1fr); }
+    .integrity-card { padding: 20px; display: flex; align-items: center; justify-content: space-between; }
+    .integrity-name { display: flex; align-items: center; gap: 11px; }
+    .check { width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--muted); background: rgba(145,154,147,.05); font-size: 13px; }
+    .check.verified { border-color: rgba(62,207,142,.28); color: var(--green); background: var(--green-soft); }
+    .integrity-count { color: var(--green); font: 500 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .table-card { overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+    th { color: var(--muted); font-weight: 400; background: rgba(15,17,16,.35); }
+    tbody tr:last-child td { border-bottom: 0; }
+    .status-pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: 999px; text-transform: capitalize; }
+    .status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+    .status-pill.healthy::before { background: var(--green); }
+    .status-pill.degraded::before { background: var(--amber); }
+    .status-pill.error::before { background: var(--red); }
+    .photos { grid-template-columns: repeat(5, 1fr); }
+    .photo { aspect-ratio: 4/3; overflow: hidden; position: relative; }
+    .photo img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .photo time { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 5px 7px; border-radius: 6px; color: white; background: rgba(0,0,0,.65); font-size: 10px; }
+    .empty { padding: 38px 24px; text-align: center; color: var(--muted); }
+    .empty strong { display: block; margin-bottom: 5px; color: #d3d8d4; font-weight: 500; }
+    .privacy { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+    .privacy svg { width: 14px; height: 14px; }
+    .error-banner { display: none; margin-top: 28px; padding: 13px 16px; border: 1px solid rgba(238,119,119,.28); border-radius: 10px; color: #f1b0b0; background: rgba(238,119,119,.08); }
+    footer { padding: 22px 0 40px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+    @media (max-width: 780px) {
+      .shell { width: min(100% - 26px, 1160px); }
+      main { padding-top: 44px; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .integrity { grid-template-columns: 1fr; }
+      .photos { grid-template-columns: repeat(2, 1fr); }
+      .table-card { overflow-x: auto; }
+      table { min-width: 630px; }
+    }
+    @media (max-width: 440px) {
+      .metrics { grid-template-columns: 1fr; }
+      .nav-meta span:last-child { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="shell">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M8 4c3 3 4 6 4 10M24 4c-3 3-4 6-4 10M5 8l5 3M27 8l-5 3M10 15c1-3 11-3 12 0 2 6-1 12-6 14-5-2-8-8-6-14Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13" cy="18" r="1" fill="currentColor"/><circle cx="19" cy="18" r="1" fill="currentColor"/></svg>
+        <span>DeerID Operations</span>
+      </div>
+      <div class="nav-meta"><i id="nav-dot" class="pulse"></i><span id="nav-status">Checking service</span></div>
+    </nav>
+  </header>
+  <main class="shell">
+    <p class="eyebrow">Private archive telemetry</p>
+    <h1>Reveal ingestion, from cloud to private archive.</h1>
+    <p class="lede">A privacy-preserving view of synchronization health and archive integrity. No credentials, camera locations, or storage paths are exposed here.</p>
+    <div id="updated" class="updated">Fetching durable status…</div>
+    <div id="error" class="error-banner" role="alert"></div>
+
+    <section class="grid metrics" aria-label="Latest synchronization metrics">
+      <article class="card metric"><div class="metric-label">System health</div><div id="health" class="metric-value">—</div><div id="health-detail" class="metric-detail">Awaiting status</div></article>
+      <article class="card metric"><div class="metric-label">Downloaded</div><div id="downloaded" class="metric-value">—</div><div class="metric-detail">New archive units</div></article>
+      <article class="card metric"><div class="metric-label">Already verified</div><div id="skipped" class="metric-value">—</div><div class="metric-detail">Integrity checks passed</div></article>
+      <article class="card metric"><div class="metric-label">Failed</div><div id="failed" class="metric-value">—</div><div class="metric-detail">Latest bounded run</div></article>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>Photo archive integrity</h2><p class="section-copy">Each complete archive unit requires all three private objects.</p></div></div>
+      <div class="grid integrity">
+        <article class="card integrity-card"><div class="integrity-name"><span id="image-check" class="check">·</span><span>Photo image</span></div><strong id="images" class="integrity-count">—</strong></article>
+        <article class="card integrity-card"><div class="integrity-name"><span id="metadata-check" class="check">·</span><span>Metadata JSON</span></div><strong id="metadata" class="integrity-count">—</strong></article>
+        <article class="card integrity-card"><div class="integrity-name"><span id="checksum-check" class="check">·</span><span>SHA-256 checksum</span></div><strong id="checksums" class="integrity-count">—</strong></article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>Recent runs</h2><p class="section-copy">The latest 20 synchronization outcomes stored durably in private Storage.</p></div></div>
+      <div class="card table-card"><table><thead><tr><th>Completed</th><th>Status</th><th>Downloaded</th><th>Verified</th><th>Failed</th></tr></thead><tbody id="runs"><tr><td colspan="5" class="empty">Loading run history…</td></tr></tbody></table></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>Recent photos</h2><p class="section-copy">Photo previews remain disabled and private.</p></div><div class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span>Private</span></div></div>
+      <div class="grid photos"><div class="card empty" style="grid-column:1/-1"><strong>Previews are disabled</strong>Archived photos are never served by this dashboard.</div></div>
+    </section>
+  </main>
+  <footer><div class="shell">DeerID · Private archive telemetry · Refreshes every 30 seconds</div></footer>
+  <script>
+    const $ = id => document.getElementById(id);
+    const n = value => Number.isInteger(value) && value >= 0 ? value : 0;
+    const date = value => value ? new Date(value).toLocaleString([], {dateStyle:'medium', timeStyle:'short'}) : 'Not available';
+    function setHealth(value) {
+      const known = ['healthy','degraded','error'];
+      const health = known.includes(value) ? value : 'unknown';
+      $('health').textContent = health[0].toUpperCase() + health.slice(1);
+      $('nav-status').textContent = health === 'healthy' ? 'All systems reporting' : health === 'unknown' ? 'No completed runs' : 'Attention required';
+      $('nav-dot').className = 'pulse ' + health;
+      $('health-detail').textContent = health === 'healthy' ? 'Latest run completed' : health === 'unknown' ? 'Waiting for first run' : 'Review recent runs';
+    }
+    function renderRuns(runs) {
+      const body = $('runs'); body.replaceChildren();
+      if (!runs.length) { const row=body.insertRow(); const cell=row.insertCell(); cell.colSpan=5; cell.className='empty'; cell.textContent='No synchronization runs have been recorded yet.'; return; }
+      runs.forEach(run => {
+        const row=body.insertRow();
+        const values=[date(run.finished_at), run.status || 'unknown', n(run.downloaded), n(run.skipped), n(run.failed)];
+        values.forEach((value,index)=>{ const cell=row.insertCell(); if(index===1){ const pill=document.createElement('span'); pill.className='status-pill '+value; pill.textContent=value; cell.appendChild(pill); } else cell.textContent=value; });
+      });
+    }
+
+    async function refresh() {
+      try {
+        const response=await fetch('/api/status',{cache:'no-store'}); const data=await response.json();
+        if(!response.ok || !data.ok) throw new Error('Status service unavailable');
+        $('error').style.display='none'; setHealth(data.health);
+        $('updated').textContent='Last durable update · '+date(data.updated_at);
+        const latest=data.latest || {}; $('downloaded').textContent=n(latest.downloaded); $('skipped').textContent=n(latest.skipped); $('failed').textContent=n(latest.failed);
+        const verified=latest.verified || {}; $('images').textContent=n(verified.image); $('metadata').textContent=n(verified.metadata); $('checksums').textContent=n(verified.checksum);
+        [['image-check',verified.image],['metadata-check',verified.metadata],['checksum-check',verified.checksum]].forEach(([id,count])=>{ const mark=$(id); const complete=n(count)>0; mark.className='check'+(complete?' verified':''); mark.textContent=complete?'✓':'·'; });
+        renderRuns(Array.isArray(data.recent_runs)?data.recent_runs:[]);
+      } catch (_) {
+        setHealth('error'); $('updated').textContent='Durable status is temporarily unavailable'; $('error').textContent='The dashboard could not read its private status manifest. Synchronization remains fail-closed.'; $('error').style.display='block';
+      }
+    }
+    refresh(); setInterval(refresh,30000);
+  </script>
+</body>
+</html>
