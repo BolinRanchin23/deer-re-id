@@ -352,7 +352,7 @@ class SupabaseArchive:
         )
         if response.status == 200:
             return response.body
-        if response.status == 404:
+        if response.status == 404 or _is_missing_object_response(response):
             return None
         raise StorageError(f"Supabase object read failed with HTTP {response.status}")
 
@@ -395,6 +395,25 @@ def _project_origin(value: str) -> str:
     if parts.scheme.lower() != "https":
         raise ValueError("Supabase project URL must use HTTPS")
     return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+
+
+def _is_missing_object_response(response: StorageResponse) -> bool:
+    if response.status != 400:
+        return False
+    try:
+        payload = json.loads(response.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    status_code = str(payload.get("statusCode", ""))
+    error = str(payload.get("error", "")).lower()
+    message = str(payload.get("message", "")).lower()
+    return (
+        status_code == "404"
+        or error in {"not_found", "object_not_found"}
+        or "object not found" in message
+    )
 
 
 def _path_suffix(path: str) -> str:

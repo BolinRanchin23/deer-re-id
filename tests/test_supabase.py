@@ -85,6 +85,36 @@ class FakeRevealClient:
 
 
 class SupabaseArchiveTests(unittest.TestCase):
+    def test_missing_object_http_400_is_treated_as_absent(self):
+        class SupabaseMissingObjectTransport(FakeStorageTransport):
+            def request(self, method, url, *, headers=None, body=None, max_response_bytes=None):
+                marker = "/storage/v1/object/authenticated/"
+                if marker in url and method == "GET":
+                    object_path = url.split(marker, 1)[1]
+                    if object_path not in self.objects:
+                        self.calls.append((method, url, headers or {}, body))
+                        return StorageResponse(
+                            400,
+                            b'{"statusCode":"404","error":"not_found","message":"Object not found"}',
+                        )
+                return super().request(
+                    method,
+                    url,
+                    headers=headers,
+                    body=body,
+                    max_response_bytes=max_response_bytes,
+                )
+
+        transport = SupabaseMissingObjectTransport()
+        archive = SupabaseArchive(
+            "https://project.supabase.co", "sb_secret_test", transport=transport
+        )
+
+        result = archive.sync(FakeRevealClient(), max_pages=1)
+
+        self.assertEqual(result.downloaded, 1)
+        self.assertEqual(result.failed, 0)
+
     def test_bucket_not_found_http_400_creates_private_bucket(self):
         class MissingBucketTransport(FakeStorageTransport):
             def request(self, method, url, *, headers=None, body=None, max_response_bytes=None):
