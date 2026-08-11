@@ -246,6 +246,18 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("gate1b_queue <> 'suppressed'", sql)
         self.assertIn("least(coalesce(p_limit, 60), 60)", sql)
 
+    def test_gate1b_validation_batch_balances_camera_and_review_archive_strata(self):
+        sql = (
+            Path(
+                "supabase/migrations/20260811224500_gate1b_balanced_validation_batch.sql"
+            )
+            .read_text()
+            .lower()
+        )
+        self.assertIn("partition by m.camera_id, g.route", sql)
+        self.assertIn("g.route in ('review', 'archive')", sql)
+        self.assertIn("order by stratum_rank, camera_id", sql)
+
 
 if __name__ == "__main__":
     unittest.main()
