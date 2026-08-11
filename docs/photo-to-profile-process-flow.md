@@ -150,7 +150,7 @@ Its triage classes are:
 - **Uncertain:** partial/hidden heads, mixed groups, unassessed animals, non-target ambiguity, malformed output or model failure.
 - **Female candidate:** target species only, with every animal clearly assessed, full head visibility and no male/antler evidence.
 
-A female candidate is **not the same as a confirmed female**. Routine suppression and automatic HD prioritization remain blocked on a representative local validation set, recall calibration and ongoing audits.
+A female candidate is **not the same as a confirmed female**. Positive male/antler evidence may prioritize HD and review immediately, but routine female-only suppression remains blocked on a representative local validation set, retention-recall calibration and ongoing audits. Human corrections may elevate an event into the male-priority queue, but the four correction fields alone can never suppress an event.
 
 ### 🧭 Planned next
 
@@ -228,7 +228,7 @@ verified media + per-animal crops
 ## Advancement gates
 
 - **Gate 1 species screening:** exceed 90% species accuracy on a locally labeled set and operate stably for multiple off-grid days through cloudy December conditions before field dependence.
-- **Gate 1B suppression/HD policy:** target approximately 99% human-labeled buck-event recall, review every miss, and demonstrate a skipped-event false-negative rate below 1% with sample counts and uncertainty reported. These are engineering targets, not promised performance.
+- **Gate 1B suppression/HD policy:** target approximately 99% **buck-retention recall**—the fraction of human-labeled buck events kept out of the female-candidate path. Suppression is pinned to one exact model/prompt version and cannot activate until there are at least 100 matching human labels across all four cameras and both day/color and night/IR, including at least 10 whitetail labels, 10 axis labels, 20 total buck events, 10 whitetail buck events and 5 axis buck events. Overall, whitetail and axis buck-retention recall must each meet 99%; any later human label that breaks a gate disables suppression. Review every miss and report counts and uncertainty. These are engineering targets, not promised performance.
 - **Stage 1 re-ID fine-tuning:** proceed only if confirmed within-season top-5 retrieval precision is approximately 70–80% or better. Otherwise, embeddings remain a human-reviewed retrieval aid.
 - Report whitetail vs. axis, day/color vs. night/IR, and single- vs. multi-animal results separately.
 

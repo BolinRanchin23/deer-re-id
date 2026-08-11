@@ -61,8 +61,9 @@ def triage_prediction(prediction: Mapping[str, Any]) -> str:
     ):
         return "likely_male"
     if (
-        prediction.get("species") in TARGET_SPECIES
-        and prediction.get("visible_antler") == "no"
+        prediction["species"] in TARGET_SPECIES
+        and prediction["animal_count"] >= 1
+        and prediction["visible_antler"] == "no"
         and prediction.get("probable_male") == "no"
         and prediction.get("head_visibility") == "full"
         and prediction.get("all_animals_assessed") is True

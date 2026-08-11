@@ -27,6 +27,8 @@ MAX_LIBRARY_PHOTOS = 60
 MAX_LIBRARY_PREVIEW_BYTES = 8 * 1024 * 1024
 GATE1_MODEL_NAME = "SpeciesNet"
 GATE1_MODEL_VERSION = "4.0.3a"
+GATE1B_MODEL_NAME = "Ollama-Gemma4-Vision"
+GATE1B_MODEL_VERSION = "gemma4-e4b-c6eb396dbd59@prompt-2026-08-11.1"
 _UUID = re.compile(
     r"\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
 )
@@ -638,7 +640,8 @@ def _sanitize_pipeline(value: Any) -> Dict[str, Any]:
 def _sanitize_gate1b_metrics(value: Any) -> Dict[str, Any]:
     if (
         not isinstance(value, Mapping)
-        or value.get("model_name") != "Ollama-Gemma4-Vision"
+        or value.get("model_name") != GATE1B_MODEL_NAME
+        or value.get("model_version") != GATE1B_MODEL_VERSION
     ):
         raise StorageError("Gate 1B metrics are unavailable")
     count_fields = (
@@ -655,7 +658,10 @@ def _sanitize_gate1b_metrics(value: Any) -> Dict[str, Any]:
         "minimum_labels",
         "minimum_buck_events",
     )
-    output: Dict[str, Any] = {"model_name": value["model_name"]}
+    output: Dict[str, Any] = {
+        "model_name": value["model_name"],
+        "model_version": value["model_version"],
+    }
     for field in count_fields:
         count = value.get(field)
         if not isinstance(count, int) or isinstance(count, bool) or count < 0:

@@ -258,6 +258,35 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("g.route in ('review', 'archive')", sql)
         self.assertIn("order by stratum_rank, camera_id", sql)
 
+    def test_gate1b_suppression_is_pinned_validated_and_fail_closed(self):
+        sql = (
+            Path("supabase/migrations/20260811230000_gate1b_fail_closed_policy.sql")
+            .read_text()
+            .lower()
+        )
+        self.assertIn("model_version text not null", sql)
+        self.assertIn("gate1b_policy_fail_closed", sql)
+        self.assertIn("gate1b_label_rechecks_policy", sql)
+        self.assertIn("minimum_axis_buck_events", sql)
+        self.assertIn("axis_buck_retention_recall", sql)
+        self.assertIn("coalesce((item->>'animal_count')::integer, 0) < 1", sql)
+        self.assertIn("assessment.media_id <> (item->>'media_id')::uuid", sql)
+        self.assertIn("assessment.event_key is distinct from item->>'event_key'", sql)
+        self.assertIn(
+            "revoke insert, update, delete, truncate on deerid.gate1b_predictions",
+            sql,
+        )
+
+    def test_human_corrections_can_elevate_but_never_suppress(self):
+        sql = (
+            Path("supabase/migrations/20260811230500_gate1b_pinned_review_routing.sql")
+            .read_text()
+            .lower()
+        )
+        self.assertIn("gp.model_version = policy.model_version", sql)
+        self.assertIn("human_antler = 'yes' or human_male = 'yes'", sql)
+        self.assertNotIn("human_head = 'full' then 'female_candidate'", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

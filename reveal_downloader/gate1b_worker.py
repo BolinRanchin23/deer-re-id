@@ -12,11 +12,13 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable, Mapping, Optional
 
-from .catalog import SupabaseCatalog
+from .catalog import GATE1B_MODEL_NAME as MODEL_NAME
+from .catalog import GATE1B_MODEL_VERSION as MODEL_VERSION
+from .catalog import (
+    SupabaseCatalog,
+)
 from .gate1b import normalize_prediction, triage_prediction
 
-MODEL_NAME = "Ollama-Gemma4-Vision"
-MODEL_VERSION = "gemma4-e4b-c6eb396dbd59@prompt-2026-08-11.1"
 DEFAULT_MODEL = "gemma4:e4b"
 DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
 MAX_IMAGE_BYTES = 12 * 1024 * 1024

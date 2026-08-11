@@ -54,6 +54,22 @@ class Gate1BTriageTests(unittest.TestCase):
         )
         self.assertEqual(triage_prediction(prediction), "female_candidate")
 
+    def test_zero_animal_output_can_never_be_a_female_candidate(self):
+        prediction = normalize_prediction(
+            {
+                "animal_count": 0,
+                "species": "axis",
+                "visible_antler": "no",
+                "probable_male": "no",
+                "head_visibility": "full",
+                "lighting": "day_color",
+                "mixed_group": False,
+                "all_animals_assessed": True,
+                "reason": "No deer is visible.",
+            }
+        )
+        self.assertEqual(triage_prediction(prediction), "uncertain")
+
     def test_non_target_and_malformed_outputs_fail_to_uncertain(self):
         non_target = normalize_prediction(
             {

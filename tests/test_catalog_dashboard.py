@@ -88,6 +88,7 @@ class MemoryCatalog:
     def read_gate1b_metrics(self):
         return {
             "model_name": "Ollama-Gemma4-Vision",
+            "model_version": "gemma4-e4b-c6eb396dbd59@prompt-2026-08-11.1",
             "predictions": 0,
             "likely_male": 0,
             "uncertain": 0,
