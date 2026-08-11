@@ -40,6 +40,13 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("candidate_events", hardening)
         self.assertIn("queue_priority", hardening)
 
+    def test_pending_hardening_filters_variants_and_bounds_complete_events(self):
+        sql = Path("supabase/migrations/20260811031500_gate1_pending_hardening.sql").read_text().lower()
+        self.assertIn("m.variant = 'cloud_thumbnail'", sql)
+        self.assertIn("extract(epoch from event_start)", sql)
+        self.assertIn("/ 10", sql)
+        self.assertIn("limit least(greatest(p_limit, 1), 50)", sql)
+
 
 if __name__ == "__main__":
     unittest.main()
