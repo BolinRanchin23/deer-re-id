@@ -1,12 +1,12 @@
+import json
 import unittest
 from http.server import BaseHTTPRequestHandler
-import json
 from pathlib import Path
 
-from api.status import handler as StatusHandler
 from api.library import handler as LibraryHandler
 from api.library_preview import handler as LibraryPreviewHandler
 from api.review import handler as ReviewHandler
+from api.status import handler as StatusHandler
 
 
 class DashboardHttpAdapterTests(unittest.TestCase):
@@ -31,7 +31,10 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertNotIn("Archived photos are never served by this dashboard", html)
         self.assertNotIn('<span class="check">✓</span>', html)
         compact_js = "".join(app_js.split())
-        self.assertIn("Math.min(n(verified.image),n(verified.metadata),n(verified.checksum))", compact_js)
+        self.assertIn(
+            "Math.min(n(verified.image),n(verified.metadata),n(verified.checksum))",
+            compact_js,
+        )
         self.assertNotIn("n(run.downloaded), n(run.skipped), n(run.failed)", app_js)
         self.assertIn("Photo archive", html)
         self.assertIn("camera map", html)
@@ -62,7 +65,9 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn("img-src 'self'", headers["Content-Security-Policy"])
         self.assertIn("server.arcgisonline.com", headers["Content-Security-Policy"])
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
-        self.assertNotIn("'unsafe-inline'", headers["Content-Security-Policy"].split("style-src")[0])
+        self.assertNotIn(
+            "'unsafe-inline'", headers["Content-Security-Policy"].split("style-src")[0]
+        )
         self.assertEqual(headers["Referrer-Policy"], "no-referrer")
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(headers["X-Frame-Options"], "DENY")

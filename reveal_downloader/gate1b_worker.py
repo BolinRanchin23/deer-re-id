@@ -7,10 +7,10 @@ import base64
 import json
 import os
 import time
-from typing import Any, Callable, Mapping, Optional
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any, Callable, Mapping, Optional
 
 from .catalog import SupabaseCatalog
 from .gate1b import normalize_prediction, triage_prediction
@@ -51,8 +51,15 @@ SCHEMA = {
         "reason": {"type": "string", "maxLength": 300},
     },
     "required": [
-        "animal_count", "species", "visible_antler", "probable_male",
-        "head_visibility", "lighting", "mixed_group", "all_animals_assessed", "reason",
+        "animal_count",
+        "species",
+        "visible_antler",
+        "probable_male",
+        "head_visibility",
+        "lighting",
+        "mixed_group",
+        "all_animals_assessed",
+        "reason",
     ],
     "additionalProperties": False,
 }
@@ -73,7 +80,9 @@ class _HTTPTransport:
         timeout: float,
         max_response_bytes: int,
     ) -> tuple[int, bytes]:
-        request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
+        request = urllib.request.Request(
+            url, data=body, headers=dict(headers), method=method
+        )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = response.read(max_response_bytes + 1)
@@ -95,7 +104,11 @@ class OllamaVisionClient:
         transport: Optional[Any] = None,
     ) -> None:
         parsed = urllib.parse.urlsplit(endpoint)
-        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        if parsed.scheme != "http" or parsed.hostname not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
             raise ValueError("Ollama endpoint must be local loopback HTTP")
         if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
             raise ValueError("Ollama endpoint is invalid")
@@ -133,10 +146,18 @@ class OllamaVisionClient:
             raise ModelUnavailable("local model request failed")
         try:
             outer = json.loads(body.decode("utf-8"))
-            if outer.get("done") is not True or not isinstance(outer.get("response"), str):
+            if outer.get("done") is not True or not isinstance(
+                outer.get("response"), str
+            ):
                 raise ValueError
             return normalize_prediction(json.loads(outer["response"]))
-        except (AttributeError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (
+            AttributeError,
+            TypeError,
+            ValueError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ) as exc:
             raise ModelUnavailable("local model response is malformed") from exc
 
 
@@ -154,7 +175,9 @@ def run_worker(
     if not url or not secret:
         raise ValueError("Supabase configuration is required")
     bounded_limit = max(1, min(int(limit), 60))
-    catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos"))
+    catalog = catalog_factory(
+        url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
+    )
     catalog.set_deadline(deadline or (clock() + 1800), clock=clock)
     pending = catalog.read_gate1b_pending(MODEL_NAME, MODEL_VERSION, bounded_limit)
     if not isinstance(pending, list) or len(pending) > bounded_limit:
@@ -170,33 +193,44 @@ def run_worker(
     failed_count = 0
     for item in pending:
         try:
-            image = catalog.read_private_image(item["object_path"], max_bytes=MAX_IMAGE_BYTES)
+            image = catalog.read_private_image(
+                item["object_path"], max_bytes=MAX_IMAGE_BYTES
+            )
             prediction = analyzer.analyze(image)
-        except (KeyError, OSError, RuntimeError, TypeError, ValueError, ModelUnavailable):
+        except (
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            ModelUnavailable,
+        ):
             # Do not turn an unavailable model into durable evidence. The item remains
             # pending for the same version and the ordinary review route stays uncertain.
             failed_count += 1
             continue
         triage = triage_prediction(prediction)
         counts[triage] += 1
-        rows.append({
-            "media_id": item["media_id"],
-            "gate1_assessment_id": item["gate1_assessment_id"],
-            "event_key": item["event_key"],
-            "species_label": prediction["species"],
-            "visible_antler": prediction["visible_antler"],
-            "probable_male": prediction["probable_male"],
-            "head_visibility": prediction["head_visibility"],
-            "lighting": prediction["lighting"],
-            "animal_count": prediction["animal_count"],
-            "mixed_group": prediction["mixed_group"],
-            "all_animals_assessed": prediction["all_animals_assessed"],
-            "triage_class": triage,
-            "hd_recommended": triage == "likely_male",
-            "model_failure": False,
-            "reason": prediction["reason"],
-            "raw_output": prediction,
-        })
+        rows.append(
+            {
+                "media_id": item["media_id"],
+                "gate1_assessment_id": item["gate1_assessment_id"],
+                "event_key": item["event_key"],
+                "species_label": prediction["species"],
+                "visible_antler": prediction["visible_antler"],
+                "probable_male": prediction["probable_male"],
+                "head_visibility": prediction["head_visibility"],
+                "lighting": prediction["lighting"],
+                "animal_count": prediction["animal_count"],
+                "mixed_group": prediction["mixed_group"],
+                "all_animals_assessed": prediction["all_animals_assessed"],
+                "triage_class": triage,
+                "hd_recommended": triage == "likely_male",
+                "model_failure": False,
+                "reason": prediction["reason"],
+                "raw_output": prediction,
+            }
+        )
     recorded = 0
     if rows:
         result = catalog.record_gate1b_batch(MODEL_NAME, MODEL_VERSION, rows)
@@ -204,8 +238,11 @@ def run_worker(
             raise RuntimeError("Gate 1B predictions were not recorded")
         recorded = int(result.get("inserted", 0))
     return {
-        "ok": True, "pending": len(pending), "recorded": recorded,
-        "failed": failed_count, **counts,
+        "ok": True,
+        "pending": len(pending),
+        "recorded": recorded,
+        "failed": failed_count,
+        **counts,
     }
 
 

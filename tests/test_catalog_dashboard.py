@@ -3,10 +3,10 @@ from pathlib import Path
 
 from reveal_downloader.catalog import (
     _sanitize_photos,
+    handle_gate1b_label,
     handle_library,
     handle_library_preview,
     handle_review,
-    handle_gate1b_label,
 )
 from reveal_downloader.client import HDRequestRejected, RevealError
 from reveal_downloader.supabase import _postgrest_auth_headers
@@ -35,9 +35,21 @@ class MemoryCatalog:
                 "variant": "cloud_thumbnail",
                 "width": 1280,
                 "height": 720,
-                "labels": [{"namespace": "species", "label": "deer", "status": "suggested"}],
+                "labels": [
+                    {"namespace": "species", "label": "deer", "status": "suggested"}
+                ],
                 "animals": [],
-                "gate1": {"id": 17, "review_version": 0, "route": "review", "reason": "target_species", "animal_confidence": 0.98, "species_label": "white-tailed deer", "species_confidence": 0.99, "model_name": "SpeciesNet", "model_version": "4.0.3a"},
+                "gate1": {
+                    "id": 17,
+                    "review_version": 0,
+                    "route": "review",
+                    "reason": "target_species",
+                    "animal_confidence": 0.98,
+                    "species_label": "white-tailed deer",
+                    "species_confidence": 0.99,
+                    "model_name": "SpeciesNet",
+                    "model_version": "4.0.3a",
+                },
                 "review_decision": None,
                 "object_path": "must-not-leak.jpg",
             }
@@ -75,30 +87,57 @@ class MemoryCatalog:
 
     def read_gate1b_metrics(self):
         return {
-            "model_name": "Ollama-Gemma4-Vision", "predictions": 0,
-            "likely_male": 0, "uncertain": 0, "female_candidates": 0,
-            "human_labels": 0, "labeled_buck_events": 0, "labeled_cameras": 0,
-            "labeled_day": 0, "labeled_ir": 0, "labeled_axis": 0,
-            "buck_recall": None, "suppression_enabled": False,
-            "suppression_ready": False, "female_audit_percent": 10,
-            "minimum_labels": 100, "minimum_buck_events": 20,
+            "model_name": "Ollama-Gemma4-Vision",
+            "predictions": 0,
+            "likely_male": 0,
+            "uncertain": 0,
+            "female_candidates": 0,
+            "human_labels": 0,
+            "labeled_buck_events": 0,
+            "labeled_cameras": 0,
+            "labeled_day": 0,
+            "labeled_ir": 0,
+            "labeled_axis": 0,
+            "buck_recall": None,
+            "suppression_enabled": False,
+            "suppression_ready": False,
+            "female_audit_percent": 10,
+            "minimum_labels": 100,
+            "minimum_buck_events": 20,
             "required_buck_recall": 0.99,
         }
 
     def record_gate1b_label(
-        self, media_id, assessment_id, review_version, species_label,
-        visible_antler, probable_male, head_visibility, note,
+        self,
+        media_id,
+        assessment_id,
+        review_version,
+        species_label,
+        visible_antler,
+        probable_male,
+        head_visibility,
+        note,
     ):
         self.gate1b_label = (
-            media_id, assessment_id, review_version, species_label,
-            visible_antler, probable_male, head_visibility, note,
+            media_id,
+            assessment_id,
+            review_version,
+            species_label,
+            visible_antler,
+            probable_male,
+            head_visibility,
+            note,
         )
         return {"ok": True, "label_id": 9}
 
     def resolve_media_object(self, media_id):
         self.resolved = media_id
         return {
-            "object_path": "cam@" + "a" * 64 + "/2026/08/08/20260808T120000Z_photo@" + "b" * 64 + ".jpg",
+            "object_path": "cam@"
+            + "a" * 64
+            + "/2026/08/08/20260808T120000Z_photo@"
+            + "b" * 64
+            + ".jpg",
             "content_type": "image/jpeg",
         }
 
@@ -135,7 +174,9 @@ class MemoryCatalog:
 
 class PrivateLibraryTests(unittest.TestCase):
     def test_postgrest_auth_distinguishes_modern_keys_from_legacy_jwts(self):
-        self.assertEqual(_postgrest_auth_headers("sb_secret_test"), {"apikey": "sb_secret_test"})
+        self.assertEqual(
+            _postgrest_auth_headers("sb_secret_test"), {"apikey": "sb_secret_test"}
+        )
         legacy = _postgrest_auth_headers("legacy.jwt.value")
         self.assertEqual(legacy["apikey"], "legacy.jwt.value")
         self.assertEqual(legacy["Authorization"], "Bearer legacy.jwt.value")
@@ -165,7 +206,9 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(len(payload["photos"]), 1)
         self.assertEqual(len(payload["cameras"]), 1)
         self.assertEqual(payload["mapbox_access_token"], "pk.mapbox-browser-token")
-        self.assertRegex(payload["photos"][0]["preview_url"], r"^/api/library_preview\?token=")
+        self.assertRegex(
+            payload["photos"][0]["preview_url"], r"^/api/library_preview\?token="
+        )
         self.assertRegex(payload["photos"][0]["review_token"], r"^[0-9]+\.")
         self.assertEqual(payload["photos"][0]["gate1"]["route"], "review")
         self.assertEqual(payload["pipeline"]["total_thumbnails"], 100)
@@ -196,7 +239,9 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(catalog.resolved, "11111111-1111-4111-8111-111111111111")
         self.assertEqual(
             handle_library_preview(
-                self.environment(), token + "x", catalog_factory=lambda *_: catalog,
+                self.environment(),
+                token + "x",
+                catalog_factory=lambda *_: catalog,
                 epoch_now=1_786_200_001,
             )[0],
             404,
@@ -204,14 +249,18 @@ class PrivateLibraryTests(unittest.TestCase):
 
     def test_pending_hd_item_is_not_issued_an_actionable_review_token(self):
         photos = _sanitize_photos(
-            [{
-                "id": "11111111-1111-4111-8111-111111111111",
-                "gate1": {
-                    "id": 17, "route": "review", "review_version": 0,
-                    "pending_hd": True,
-                },
-                "review_decision": None,
-            }],
+            [
+                {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "gate1": {
+                        "id": 17,
+                        "route": "review",
+                        "review_version": 0,
+                        "pending_hd": True,
+                    },
+                    "review_decision": None,
+                }
+            ],
             b"0123456789abcdef",
             1_786_200_000,
         )
@@ -221,22 +270,51 @@ class PrivateLibraryTests(unittest.TestCase):
     def test_signed_review_token_records_allowed_action_and_rejects_tampering(self):
         catalog = MemoryCatalog()
         _, payload = handle_library(
-            self.environment(), catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
+            self.environment(),
+            catalog_factory=lambda *_: catalog,
+            epoch_now=1_786_200_000,
         )
         token = payload["photos"][0]["review_token"]
         status, result = handle_review(
-            self.environment(), token, "keep_for_identity", "Best broadside",
-            catalog_factory=lambda *_: catalog, epoch_now=1_786_200_001,
+            self.environment(),
+            token,
+            "keep_for_identity",
+            "Best broadside",
+            catalog_factory=lambda *_: catalog,
+            epoch_now=1_786_200_001,
         )
         self.assertEqual(status, 200)
         self.assertTrue(result["ok"])
-        self.assertEqual(catalog.reviewed, ("11111111-1111-4111-8111-111111111111", 17, 0, "keep_for_identity", "Best broadside"))
         self.assertEqual(
-            handle_review(self.environment(), token + "x", "defer", "", catalog_factory=lambda *_: catalog, epoch_now=1_786_200_001)[0],
+            catalog.reviewed,
+            (
+                "11111111-1111-4111-8111-111111111111",
+                17,
+                0,
+                "keep_for_identity",
+                "Best broadside",
+            ),
+        )
+        self.assertEqual(
+            handle_review(
+                self.environment(),
+                token + "x",
+                "defer",
+                "",
+                catalog_factory=lambda *_: catalog,
+                epoch_now=1_786_200_001,
+            )[0],
             404,
         )
         self.assertEqual(
-            handle_review(self.environment(), token, "delete", "", catalog_factory=lambda *_: catalog, epoch_now=1_786_200_001)[0],
+            handle_review(
+                self.environment(),
+                token,
+                "delete",
+                "",
+                catalog_factory=lambda *_: catalog,
+                epoch_now=1_786_200_001,
+            )[0],
             400,
         )
 
@@ -266,8 +344,12 @@ class PrivateLibraryTests(unittest.TestCase):
         token = payload["photos"][0]["review_token"]
 
         status, result = handle_review(
-            environment, token, "request_hd", "Best broadside",
-            catalog_factory=lambda *_: catalog, reveal_factory=FakeReveal,
+            environment,
+            token,
+            "request_hd",
+            "Best broadside",
+            catalog_factory=lambda *_: catalog,
+            reveal_factory=FakeReveal,
             epoch_now=1_786_200_001,
         )
 
@@ -299,8 +381,12 @@ class PrivateLibraryTests(unittest.TestCase):
         )
 
         status, result = handle_review(
-            environment, payload["photos"][0]["review_token"], "request_hd", "",
-            catalog_factory=lambda *_: catalog, reveal_factory=FailingReveal,
+            environment,
+            payload["photos"][0]["review_token"],
+            "request_hd",
+            "",
+            catalog_factory=lambda *_: catalog,
+            reveal_factory=FailingReveal,
             epoch_now=1_786_200_001,
         )
 
@@ -334,8 +420,12 @@ class PrivateLibraryTests(unittest.TestCase):
         )
 
         status, result = handle_review(
-            environment, payload["photos"][0]["review_token"], "request_hd", "",
-            catalog_factory=lambda *_: catalog, reveal_factory=TimingOutReveal,
+            environment,
+            payload["photos"][0]["review_token"],
+            "request_hd",
+            "",
+            catalog_factory=lambda *_: catalog,
+            reveal_factory=TimingOutReveal,
             epoch_now=1_786_200_001,
         )
 
@@ -357,7 +447,11 @@ class PrivateLibraryTests(unittest.TestCase):
         status, result = handle_gate1b_label(
             environment,
             payload["photos"][0]["review_token"],
-            "axis", "yes", "yes", "full", "spotted axis buck",
+            "axis",
+            "yes",
+            "yes",
+            "full",
+            "spotted axis buck",
             catalog_factory=lambda *_: catalog,
             epoch_now=1_786_200_001,
         )
@@ -366,8 +460,14 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(
             catalog.gate1b_label,
             (
-                "11111111-1111-4111-8111-111111111111", 17, 0,
-                "axis", "yes", "yes", "full", "spotted axis buck",
+                "11111111-1111-4111-8111-111111111111",
+                17,
+                0,
+                "axis",
+                "yes",
+                "yes",
+                "full",
+                "spotted axis buck",
             ),
         )
         self.assertIsNone(catalog.reviewed)
@@ -395,9 +495,14 @@ class Gate1ReviewUiTests(unittest.TestCase):
         self.assertIn("preloadReviewQueue(5)", script)
         self.assertIn("review-enter-right", script)
         self.assertIn("review-exit-left", script)
-        submit_body = script.split("async function submitReview", 1)[1].split("\n}\n", 1)[0]
+        submit_body = script.split("async function submitReview", 1)[1].split(
+            "\n}\n", 1
+        )[0]
         self.assertNotIn("fetchLibrary()", submit_body)
-        self.assertGreater(submit_body.index("refreshReviewBuffer()"), submit_body.index("await fetch('/api/review'"))
+        self.assertGreater(
+            submit_body.index("refreshReviewBuffer()"),
+            submit_body.index("await fetch('/api/review'"),
+        )
         self.assertIn("pendingReviewIds.size === 0", submit_body)
         self.assertIn("refreshReviewBuffer", script)
 
@@ -406,8 +511,12 @@ class Gate1ReviewUiTests(unittest.TestCase):
         script = Path("public/app.js").read_text()
         self.assertIn("Gate 1 narrowing", html)
         for element_id in (
-            "pipeline-total", "pipeline-assessed", "pipeline-review",
-            "pipeline-duplicates", "pipeline-blanks", "pipeline-nontarget",
+            "pipeline-total",
+            "pipeline-assessed",
+            "pipeline-review",
+            "pipeline-duplicates",
+            "pipeline-blanks",
+            "pipeline-nontarget",
             "pipeline-pending",
         ):
             self.assertIn(f'id="{element_id}"', html)
@@ -420,7 +529,12 @@ class Gate1ReviewUiTests(unittest.TestCase):
         for queue in ("likely_male", "uncertain", "female_audit"):
             self.assertIn(f'data-review-queue="{queue}"', html)
             self.assertIn(queue, script)
-        for field in ("species_label", "visible_antler", "probable_male", "head_visibility"):
+        for field in (
+            "species_label",
+            "visible_antler",
+            "probable_male",
+            "head_visibility",
+        ):
             self.assertIn(field, script)
         self.assertIn("/api/gate1b_label", script)
         self.assertIn("Save corrections", script)

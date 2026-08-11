@@ -1,8 +1,8 @@
 """Append-only Gate 1B human correction endpoint."""
 
-from http.server import BaseHTTPRequestHandler
 import json
 import os
+from http.server import BaseHTTPRequestHandler
 
 from reveal_downloader.catalog import handle_gate1b_label
 
@@ -38,7 +38,9 @@ class handler(BaseHTTPRequestHandler):
         self._write(status, result)
 
     def _write(self, status: int, payload: dict) -> None:
-        body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")

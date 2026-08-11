@@ -4,10 +4,10 @@
 import fcntl
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import urllib.request
+from pathlib import Path
 
 PROJECT_REF = "vypmpmlhuqwvrxypowqa"
 PROJECT_URL = f"https://{PROJECT_REF}.supabase.co"
@@ -23,16 +23,27 @@ def main() -> int:
         return 0
 
     try:
-        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as response:
+        with urllib.request.urlopen(
+            "http://127.0.0.1:11434/api/tags", timeout=5
+        ) as response:
             tags = json.load(response)
-        names = {item.get("name") for item in tags.get("models", []) if isinstance(item, dict)}
+        names = {
+            item.get("name")
+            for item in tags.get("models", [])
+            if isinstance(item, dict)
+        }
         if MODEL not in names:
             raise RuntimeError(f"required local model {MODEL} is unavailable")
 
         keys = subprocess.run(
             [
-                "supabase", "projects", "api-keys", "--project-ref", PROJECT_REF,
-                "--output", "json",
+                "supabase",
+                "projects",
+                "api-keys",
+                "--project-ref",
+                PROJECT_REF,
+                "--output",
+                "json",
             ],
             cwd=REPO,
             check=True,
@@ -42,7 +53,8 @@ def main() -> int:
         )
         records = json.loads(keys.stdout)
         service_key = next(
-            item["api_key"] for item in records
+            item["api_key"]
+            for item in records
             if item.get("name") == "service_role" and item.get("api_key")
         )
         environ = {
@@ -64,7 +76,9 @@ def main() -> int:
         )
         result = json.loads(completed.stdout)
         if result.get("failed"):
-            raise RuntimeError(f"Gate 1B left {result['failed']} event(s) pending after model failure")
+            raise RuntimeError(
+                f"Gate 1B left {result['failed']} event(s) pending after model failure"
+            )
         return 0
     except Exception as exc:
         print(f"DeerID Gate 1B scheduler failed: {exc}", file=sys.stderr)

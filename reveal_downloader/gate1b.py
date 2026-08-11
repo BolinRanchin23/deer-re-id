@@ -14,8 +14,15 @@ def normalize_prediction(value: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("prediction must be an object")
     required = {
-        "animal_count", "species", "visible_antler", "probable_male",
-        "head_visibility", "lighting", "mixed_group", "all_animals_assessed", "reason",
+        "animal_count",
+        "species",
+        "visible_antler",
+        "probable_male",
+        "head_visibility",
+        "lighting",
+        "mixed_group",
+        "all_animals_assessed",
+        "reason",
     }
     if set(value) != required:
         raise ValueError("prediction fields are invalid")
@@ -31,7 +38,9 @@ def normalize_prediction(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("head_visibility is invalid")
     if value["lighting"] not in LIGHTING:
         raise ValueError("lighting is invalid")
-    if not isinstance(value["mixed_group"], bool) or not isinstance(value["all_animals_assessed"], bool):
+    if not isinstance(value["mixed_group"], bool) or not isinstance(
+        value["all_animals_assessed"], bool
+    ):
         raise ValueError("prediction booleans are invalid")
     if count > 1 and not value["mixed_group"]:
         raise ValueError("multiple animals require mixed_group")
@@ -46,7 +55,10 @@ def normalize_prediction(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def triage_prediction(prediction: Mapping[str, Any]) -> str:
     """Return a prioritization class; suppression remains a separate validated policy."""
-    if prediction.get("visible_antler") == "yes" or prediction.get("probable_male") == "yes":
+    if (
+        prediction.get("visible_antler") == "yes"
+        or prediction.get("probable_male") == "yes"
+    ):
         return "likely_male"
     if (
         prediction.get("species") in TARGET_SPECIES

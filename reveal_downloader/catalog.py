@@ -5,8 +5,8 @@ import hmac
 import json
 import re
 import time
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 import uuid
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from .archive import detected_image_extension
 from .client import HDRequestRejected, RevealClient, RevealError
@@ -84,7 +84,9 @@ class SupabaseCatalog:
             raise StorageError("Private catalog is unavailable") from exc
 
     def read_library(self, limit: int = MAX_LIBRARY_PHOTOS) -> Any:
-        return self._rpc("deerid_private_library", {"p_limit": max(1, min(60, int(limit)))})
+        return self._rpc(
+            "deerid_private_library", {"p_limit": max(1, min(60, int(limit)))}
+        )
 
     def read_camera_map(self) -> Any:
         return self._rpc("deerid_private_camera_map", {})
@@ -98,7 +100,9 @@ class SupabaseCatalog:
     def read_gate1b_metrics(self) -> Any:
         return self._rpc("deerid_gate1b_metrics", {})
 
-    def read_gate1b_pending(self, model_name: str, model_version: str, limit: int = 20) -> Any:
+    def read_gate1b_pending(
+        self, model_name: str, model_version: str, limit: int = 20
+    ) -> Any:
         return self._rpc(
             "deerid_gate1b_pending",
             {
@@ -149,13 +153,21 @@ class SupabaseCatalog:
         return self._rpc("deerid_private_media_object", {"p_media_id": media_id})
 
     def record_review(
-        self, media_id: str, assessment_id: int, review_version: int, action: str, note: str
+        self,
+        media_id: str,
+        assessment_id: int,
+        review_version: int,
+        action: str,
+        note: str,
     ) -> Any:
         return self._rpc(
             "deerid_record_review_decision",
             {
-                "p_media_id": media_id, "p_assessment_id": assessment_id,
-                "p_review_version": review_version, "p_action": action, "p_note": note or None,
+                "p_media_id": media_id,
+                "p_assessment_id": assessment_id,
+                "p_review_version": review_version,
+                "p_action": action,
+                "p_note": note or None,
             },
         )
 
@@ -192,10 +204,16 @@ class SupabaseCatalog:
     def claim_queued_hd_request(self) -> Any:
         return self._rpc("deerid_claim_queued_hd_request", {})
 
-    def read_gate1_pending(self, model_name: str, model_version: str, limit: int = 60) -> Any:
+    def read_gate1_pending(
+        self, model_name: str, model_version: str, limit: int = 60
+    ) -> Any:
         return self._rpc(
             "deerid_gate1_pending",
-            {"p_model_name": model_name, "p_model_version": model_version, "p_limit": limit},
+            {
+                "p_model_name": model_name,
+                "p_model_version": model_version,
+                "p_limit": limit,
+            },
         )
 
     def record_gate1_batch(
@@ -242,7 +260,9 @@ def handle_library(
             url, key, environ.get("SUPABASE_BUCKET", "tactacam-photos")
         )
         catalog.set_deadline(clock() + LIBRARY_DEADLINE_SECONDS, clock=clock)
-        photos = _sanitize_photos(catalog.read_library(MAX_LIBRARY_PHOTOS), signing_key, current)
+        photos = _sanitize_photos(
+            catalog.read_library(MAX_LIBRARY_PHOTOS), signing_key, current
+        )
         cameras = _sanitize_cameras(catalog.read_camera_map())
         pipeline = _sanitize_pipeline(
             catalog.read_gate1_funnel(GATE1_MODEL_NAME, GATE1_MODEL_VERSION)
@@ -251,7 +271,10 @@ def handle_library(
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
         return 503, {"ok": False, "error": "library unavailable"}
     payload: Dict[str, Any] = {
-        "ok": True, "photos": photos, "cameras": cameras, "pipeline": pipeline,
+        "ok": True,
+        "photos": photos,
+        "cameras": cameras,
+        "pipeline": pipeline,
         "gate1b": gate1b,
     }
     mapbox_token = environ.get("NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN", "").strip()
@@ -284,11 +307,20 @@ def handle_library_preview(
         selected = catalog.resolve_media_object(media_id)
         if isinstance(selected, list):
             selected = selected[0] if len(selected) == 1 else None
-        object_path = selected.get("object_path") if isinstance(selected, Mapping) else None
-        expected_type = selected.get("content_type") if isinstance(selected, Mapping) else None
-        if not isinstance(object_path, str) or _OBJECT_PATH.fullmatch(object_path) is None:
+        object_path = (
+            selected.get("object_path") if isinstance(selected, Mapping) else None
+        )
+        expected_type = (
+            selected.get("content_type") if isinstance(selected, Mapping) else None
+        )
+        if (
+            not isinstance(object_path, str)
+            or _OBJECT_PATH.fullmatch(object_path) is None
+        ):
             raise StorageError("Library preview is unavailable")
-        body = catalog.read_private_image(object_path, max_bytes=MAX_LIBRARY_PREVIEW_BYTES)
+        body = catalog.read_private_image(
+            object_path, max_bytes=MAX_LIBRARY_PREVIEW_BYTES
+        )
         extension = detected_image_extension(body)
         content_type = "image/jpeg" if extension == ".jpg" else "image/png"
         if not object_path.endswith(extension) or expected_type != content_type:
@@ -327,7 +359,9 @@ def handle_review(
         return 503, {"ok": False, "error": "HD request unavailable"}
     clock = time.monotonic
     try:
-        catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos"))
+        catalog = catalog_factory(
+            url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
+        )
         deadline = clock() + HD_REQUEST_DEADLINE_SECONDS
         catalog.set_deadline(deadline, clock=clock)
         if action == "request_hd":
@@ -340,12 +374,18 @@ def handle_review(
                 state = begun.get("status")
                 if state in {"submitted", "available"}:
                     return 200, {
-                        "ok": True, "media_id": media_id, "action": action,
+                        "ok": True,
+                        "media_id": media_id,
+                        "action": action,
                         "request_status": state,
                     }
                 return 202, {
-                    "ok": True, "media_id": media_id, "action": action,
-                    "request_status": state if state in {"requesting", "unknown"} else "requesting",
+                    "ok": True,
+                    "media_id": media_id,
+                    "action": action,
+                    "request_status": (
+                        state if state in {"requesting", "unknown"} else "requesting"
+                    ),
                 }
             request_token = begun.get("request_token")
             provider_photo_id = begun.get("provider_photo_id")
@@ -366,16 +406,22 @@ def handle_review(
                 catalog.fail_hd_request(request_token, "provider_rejected")
                 return 502, {"ok": False, "error": "HD request failed"}
             except (RevealError, OSError, RuntimeError, ValueError):
-                catalog.mark_hd_request_unknown(request_token, "provider_outcome_unknown")
+                catalog.mark_hd_request_unknown(
+                    request_token, "provider_outcome_unknown"
+                )
                 return 202, {
-                    "ok": True, "media_id": media_id, "action": action,
+                    "ok": True,
+                    "media_id": media_id,
+                    "action": action,
                     "request_status": "unknown",
                 }
             result = catalog.complete_hd_request(request_token)
             if not isinstance(result, Mapping) or not result.get("ok"):
                 raise StorageError("HD request finalization failed")
             return 200, {
-                "ok": True, "media_id": media_id, "action": action,
+                "ok": True,
+                "media_id": media_id,
+                "action": action,
                 "request_status": "submitted",
             }
         result = catalog.record_review(
@@ -420,12 +466,20 @@ def handle_gate1b_label(
         return 404, {"ok": False, "error": "not found"}
     media_id, assessment_id, review_version = capability
     try:
-        catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos"))
+        catalog = catalog_factory(
+            url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
+        )
         clock = time.monotonic
         catalog.set_deadline(clock() + LIBRARY_DEADLINE_SECONDS, clock=clock)
         result = catalog.record_gate1b_label(
-            media_id, assessment_id, review_version, species_label,
-            visible_antler, probable_male, head_visibility, note.strip(),
+            media_id,
+            assessment_id,
+            review_version,
+            species_label,
+            visible_antler,
+            probable_male,
+            head_visibility,
+            note.strip(),
         )
         if not isinstance(result, Mapping) or not result.get("ok"):
             raise StorageError("Gate 1B correction failed")
@@ -439,16 +493,31 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
         raise StorageError("Private library is unavailable")
     output = []
     allowed = {
-        "id", "captured_at", "camera_id", "camera_name", "variant", "width", "height",
-        "labels", "animals", "hd_photo", "has_headshot", "battery_level", "signal_level",
-        "gate1", "gate1b", "review_decision",
+        "id",
+        "captured_at",
+        "camera_id",
+        "camera_name",
+        "variant",
+        "width",
+        "height",
+        "labels",
+        "animals",
+        "hd_photo",
+        "has_headshot",
+        "battery_level",
+        "signal_level",
+        "gate1",
+        "gate1b",
+        "review_decision",
     }
     for item in value:
         media_id = item.get("id") if isinstance(item, Mapping) else None
         if not isinstance(media_id, str) or _UUID.fullmatch(media_id) is None:
             raise StorageError("Private library is unavailable")
         safe = {name: item[name] for name in allowed if name in item}
-        safe["preview_url"] = f"/api/library_preview?token={_sign_media_token(media_id, now + LIBRARY_PREVIEW_SECONDS, key)}"
+        safe["preview_url"] = (
+            f"/api/library_preview?token={_sign_media_token(media_id, now + LIBRARY_PREVIEW_SECONDS, key)}"
+        )
         gate1 = safe.get("gate1")
         decision = safe.get("review_decision")
         if isinstance(gate1, Mapping):
@@ -461,10 +530,18 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
         if gate1b is not None:
             if not isinstance(gate1b, Mapping):
                 raise StorageError("Private library is unavailable")
-            if gate1b.get("queue") not in {"likely_male", "uncertain", "female_audit", "suppressed"}:
+            if gate1b.get("queue") not in {
+                "likely_male",
+                "uncertain",
+                "female_audit",
+                "suppressed",
+            }:
                 raise StorageError("Private library is unavailable")
             for field, choices in (
-                ("species_label", {"whitetail", "axis", "other_deer", "non_deer", "unknown", None}),
+                (
+                    "species_label",
+                    {"whitetail", "axis", "other_deer", "non_deer", "unknown", None},
+                ),
                 ("visible_antler", {"yes", "no", "unknown", None}),
                 ("probable_male", {"yes", "no", "unknown", None}),
                 ("head_visibility", {"full", "partial", "none", "unknown", None}),
@@ -476,14 +553,26 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
             and gate1.get("route") == "review"
             and (not isinstance(gate1b, Mapping) or gate1b.get("queue") != "suppressed")
             and not pending_hd
-            and (decision is None or (isinstance(decision, Mapping) and decision.get("action") == "defer"))
+            and (
+                decision is None
+                or (isinstance(decision, Mapping) and decision.get("action") == "defer")
+            )
         ):
             assessment_id = gate1.get("id")
             review_version = gate1.get("review_version")
-            if not isinstance(assessment_id, int) or assessment_id < 1 or not isinstance(review_version, int) or review_version < 0:
+            if (
+                not isinstance(assessment_id, int)
+                or assessment_id < 1
+                or not isinstance(review_version, int)
+                or review_version < 0
+            ):
                 raise StorageError("Private library is unavailable")
             safe["review_token"] = _sign_review_token(
-                media_id, assessment_id, review_version, now + LIBRARY_REVIEW_SECONDS, key
+                media_id,
+                assessment_id,
+                review_version,
+                now + LIBRARY_REVIEW_SECONDS,
+                key,
             )
         output.append(safe)
     return output
@@ -493,8 +582,16 @@ def _sanitize_cameras(value: Any) -> list[Dict[str, Any]]:
     if not isinstance(value, list) or len(value) > 100:
         raise StorageError("Private camera map is unavailable")
     allowed = {
-        "id", "name", "location_name", "latitude", "longitude", "observed_at",
-        "battery_level", "signal_level", "hardware_version", "last_seen_at",
+        "id",
+        "name",
+        "location_name",
+        "latitude",
+        "longitude",
+        "observed_at",
+        "battery_level",
+        "signal_level",
+        "hardware_version",
+        "last_seen_at",
     }
     output = []
     for item in value:
@@ -513,10 +610,16 @@ def _sanitize_pipeline(value: Any) -> Dict[str, Any]:
     if model_name != GATE1_MODEL_NAME or model_version != GATE1_MODEL_VERSION:
         raise StorageError("Gate 1 funnel is unavailable")
     count_fields = (
-        "total_thumbnails", "assessed_thumbnails", "pending_thumbnails",
-        "review_representatives", "event_duplicates", "archived",
-        "blank_or_below_threshold", "confident_non_target",
-        "unresolved_review", "resolved_review",
+        "total_thumbnails",
+        "assessed_thumbnails",
+        "pending_thumbnails",
+        "review_representatives",
+        "event_duplicates",
+        "archived",
+        "blank_or_below_threshold",
+        "confident_non_target",
+        "unresolved_review",
+        "resolved_review",
     )
     output: Dict[str, Any] = {"model_name": model_name, "model_version": model_version}
     for field in count_fields:
@@ -524,18 +627,32 @@ def _sanitize_pipeline(value: Any) -> Dict[str, Any]:
         if not isinstance(count, int) or isinstance(count, bool) or count < 0:
             raise StorageError("Gate 1 funnel is unavailable")
         output[field] = count
-    if output["assessed_thumbnails"] + output["pending_thumbnails"] != output["total_thumbnails"]:
+    if (
+        output["assessed_thumbnails"] + output["pending_thumbnails"]
+        != output["total_thumbnails"]
+    ):
         raise StorageError("Gate 1 funnel is unavailable")
     return output
 
 
 def _sanitize_gate1b_metrics(value: Any) -> Dict[str, Any]:
-    if not isinstance(value, Mapping) or value.get("model_name") != "Ollama-Gemma4-Vision":
+    if (
+        not isinstance(value, Mapping)
+        or value.get("model_name") != "Ollama-Gemma4-Vision"
+    ):
         raise StorageError("Gate 1B metrics are unavailable")
     count_fields = (
-        "predictions", "likely_male", "uncertain", "female_candidates",
-        "human_labels", "labeled_buck_events", "labeled_cameras",
-        "labeled_day", "labeled_ir", "labeled_axis", "minimum_labels",
+        "predictions",
+        "likely_male",
+        "uncertain",
+        "female_candidates",
+        "human_labels",
+        "labeled_buck_events",
+        "labeled_cameras",
+        "labeled_day",
+        "labeled_ir",
+        "labeled_axis",
+        "minimum_labels",
         "minimum_buck_events",
     )
     output: Dict[str, Any] = {"model_name": value["model_name"]}
@@ -550,7 +667,16 @@ def _sanitize_gate1b_metrics(value: Any) -> Dict[str, Any]:
         output[field] = value[field]
     audit = value.get("female_audit_percent")
     recall_target = value.get("required_buck_recall")
-    for key in ("prediction_cameras", "predicted_whitetail", "predicted_axis", "predicted_other_deer", "predicted_non_deer", "predicted_day", "predicted_ir", "predicted_mixed_groups"):
+    for key in (
+        "prediction_cameras",
+        "predicted_whitetail",
+        "predicted_axis",
+        "predicted_other_deer",
+        "predicted_non_deer",
+        "predicted_day",
+        "predicted_ir",
+        "predicted_mixed_groups",
+    ):
         raw = value.get(key, 0)
         if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw < 0:
             raise StorageError("Gate 1B metric is invalid")
@@ -558,18 +684,29 @@ def _sanitize_gate1b_metrics(value: Any) -> Dict[str, Any]:
     recall = value.get("buck_recall")
     if not isinstance(audit, int) or isinstance(audit, bool) or not 1 <= audit <= 100:
         raise StorageError("Gate 1B metrics are unavailable")
-    if not isinstance(recall_target, (int, float)) or isinstance(recall_target, bool) or not 0 <= recall_target <= 1:
-        raise StorageError("Gate 1B metrics are unavailable")
-    if recall is not None and (
-        not isinstance(recall, (int, float)) or isinstance(recall, bool) or not 0 <= recall <= 1
+    if (
+        not isinstance(recall_target, (int, float))
+        or isinstance(recall_target, bool)
+        or not 0 <= recall_target <= 1
     ):
         raise StorageError("Gate 1B metrics are unavailable")
-    output.update({
-        "female_audit_percent": audit,
-        "required_buck_recall": float(recall_target),
-        "buck_recall": None if recall is None else float(recall),
-    })
-    if output["likely_male"] + output["uncertain"] + output["female_candidates"] != output["predictions"]:
+    if recall is not None and (
+        not isinstance(recall, (int, float))
+        or isinstance(recall, bool)
+        or not 0 <= recall <= 1
+    ):
+        raise StorageError("Gate 1B metrics are unavailable")
+    output.update(
+        {
+            "female_audit_percent": audit,
+            "required_buck_recall": float(recall_target),
+            "buck_recall": None if recall is None else float(recall),
+        }
+    )
+    if (
+        output["likely_male"] + output["uncertain"] + output["female_candidates"]
+        != output["predictions"]
+    ):
         raise StorageError("Gate 1B metrics are unavailable")
     if output["human_labels"] > output["predictions"]:
         raise StorageError("Gate 1B metrics are unavailable")
@@ -587,13 +724,17 @@ def _sign_media_token(media_id: str, expires: int, key: bytes) -> str:
     return f"{payload}.{signature}"
 
 
-def _sign_review_token(media_id: str, assessment_id: int, review_version: int, expires: int, key: bytes) -> str:
+def _sign_review_token(
+    media_id: str, assessment_id: int, review_version: int, expires: int, key: bytes
+) -> str:
     payload = f"{expires}.review.{media_id}.{assessment_id}.{review_version}"
     signature = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
 
 
-def _verify_review_token(token: str, key: bytes, now: int) -> Optional[Tuple[str, int, int]]:
+def _verify_review_token(
+    token: str, key: bytes, now: int
+) -> Optional[Tuple[str, int, int]]:
     if not isinstance(token, str) or len(token) > 210:
         return None
     parts = token.split(".")
@@ -618,7 +759,11 @@ def _verify_review_token(token: str, key: bytes, now: int) -> Optional[Tuple[str
         return None
     payload = f"{expires}.review.{media_id}.{assessment_id}.{review_version}"
     expected = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
-    return (media_id, assessment_id, review_version) if hmac.compare_digest(expected, supplied) else None
+    return (
+        (media_id, assessment_id, review_version)
+        if hmac.compare_digest(expected, supplied)
+        else None
+    )
 
 
 def _verify_media_token(token: str, key: bytes, now: int) -> Optional[str]:

@@ -31,7 +31,11 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("on conflict (media_id) do nothing", self.sql.lower())
 
     def test_hardening_migration_claims_stable_events_and_one_time_reviews(self):
-        hardening = sorted(Path("supabase/migrations").glob("*_gate1_hardening.sql"))[-1].read_text().lower()
+        hardening = (
+            sorted(Path("supabase/migrations").glob("*_gate1_hardening.sql"))[-1]
+            .read_text()
+            .lower()
+        )
         self.assertIn("gate1_assessment_model_once_idx", hardening)
         self.assertIn("gate1_review_state", hardening)
         self.assertIn("p_review_version", hardening)
@@ -41,19 +45,32 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("queue_priority", hardening)
 
     def test_pending_hardening_filters_variants_and_bounds_complete_events(self):
-        sql = Path("supabase/migrations/20260811031500_gate1_pending_hardening.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811031500_gate1_pending_hardening.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("m.variant = 'cloud_thumbnail'", sql)
         self.assertIn("extract(epoch from event_start)", sql)
         self.assertIn("/ 10", sql)
         self.assertIn("limit least(greatest(p_limit, 1), 50)", sql)
 
     def test_pipeline_funnel_rpc_counts_each_gate_for_one_model_version(self):
-        sql = Path("supabase/migrations/20260811153000_gate1_funnel.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811153000_gate1_funnel.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("function public.deerid_gate1_funnel", sql)
         for field in (
-            "total_thumbnails", "assessed_thumbnails", "pending_thumbnails",
-            "review_representatives", "event_duplicates", "archived",
-            "unresolved_review", "resolved_review",
+            "total_thumbnails",
+            "assessed_thumbnails",
+            "pending_thumbnails",
+            "review_representatives",
+            "event_duplicates",
+            "archived",
+            "unresolved_review",
+            "resolved_review",
         ):
             self.assertIn(field, sql)
         self.assertIn("m.variant = 'cloud_thumbnail'", sql)
@@ -63,13 +80,21 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("service_role", sql)
 
     def test_pipeline_funnel_breaks_archives_into_blank_and_non_target_reasons(self):
-        sql = Path("supabase/migrations/20260811154500_gate1_funnel_reasons.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811154500_gate1_funnel_reasons.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("blank_or_below_threshold", sql)
         self.assertIn("confident_non_target", sql)
         self.assertIn("reason", sql)
 
     def test_gate1_claims_are_atomic_leased_and_released(self):
-        sql = Path("supabase/migrations/20260811162000_gate1_claim_leases.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811162000_gate1_claim_leases.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("create table deerid.gate1_claims", sql)
         self.assertIn("pg_advisory_xact_lock", sql)
         self.assertIn("leased_until", sql)
@@ -79,7 +104,11 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("service_role", sql)
 
     def test_gate1_recording_is_fenced_and_claims_complete_events(self):
-        sql = Path("supabase/migrations/20260811163500_gate1_claim_fencing.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811163500_gate1_claim_fencing.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("media_ids uuid[]", sql)
         self.assertIn("p_claim_token uuid", sql)
         self.assertIn("for update", sql)
@@ -88,10 +117,16 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("jsonb_array_length", sql)
 
     def test_hd_requests_are_provider_submitted_with_fenced_retry_state(self):
-        sql = Path("supabase/migrations/20260811190000_hd_request_pipeline.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811190000_hd_request_pipeline.sql")
+            .read_text()
+            .lower()
+        )
         for function in (
-            "deerid_begin_hd_request", "deerid_complete_hd_request",
-            "deerid_fail_hd_request", "deerid_mark_hd_request_unknown",
+            "deerid_begin_hd_request",
+            "deerid_complete_hd_request",
+            "deerid_fail_hd_request",
+            "deerid_mark_hd_request_unknown",
         ):
             self.assertIn(f"function public.{function}", sql)
         self.assertIn("pending_hd", sql)
@@ -108,7 +143,11 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("service_role", sql)
 
     def test_gate1_event_membership_is_persisted_before_claiming(self):
-        sql = Path("supabase/migrations/20260811165000_gate1_stable_events.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811165000_gate1_stable_events.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("create table deerid.gate1_event_memberships", sql)
         self.assertIn("primary key (media_id)", sql)
         self.assertIn("deerid_assign_gate1_events", sql)
@@ -117,27 +156,45 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("gate1_event_memberships em", sql)
 
     def test_gate1b_evidence_is_append_only_versioned_and_fails_closed(self):
-        sql = Path("supabase/migrations/20260811220000_gate1b_triage.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811220000_gate1b_triage.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("create table deerid.gate1b_predictions", sql)
         self.assertIn("unique (gate1_assessment_id, model_name, model_version)", sql)
         self.assertIn("create table deerid.gate1b_human_labels", sql)
         self.assertIn("supersedes_id bigint references deerid.gate1b_human_labels", sql)
         self.assertIn("gate 1b evidence is append-only", sql)
-        self.assertIn("revoke update, delete, truncate on deerid.gate1b_predictions", sql)
+        self.assertIn(
+            "revoke update, delete, truncate on deerid.gate1b_predictions", sql
+        )
         self.assertIn("unsafe female candidate", sql)
 
     def test_gate1b_suppression_stays_locked_until_recall_and_coverage_gate(self):
-        sql = Path("supabase/migrations/20260811220000_gate1b_triage.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811220000_gate1b_triage.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("suppression_enabled boolean not null default false", sql)
         self.assertIn("minimum_labels integer not null default 100", sql)
         self.assertIn("minimum_buck_events integer not null default 20", sql)
-        self.assertIn("required_buck_recall double precision not null default 0.99", sql)
+        self.assertIn(
+            "required_buck_recall double precision not null default 0.99", sql
+        )
         self.assertIn("t.labeled_cameras >= 4", sql)
         self.assertIn("t.labeled_day > 0 and t.labeled_ir > 0", sql)
         self.assertIn("p.triage_class <> 'female_candidate'", sql)
 
-    def test_gate1b_has_three_queues_and_policy_only_bulk_suppresses_female_candidates(self):
-        sql = Path("supabase/migrations/20260811220000_gate1b_triage.sql").read_text().lower()
+    def test_gate1b_has_three_queues_and_policy_only_bulk_suppresses_female_candidates(
+        self,
+    ):
+        sql = (
+            Path("supabase/migrations/20260811220000_gate1b_triage.sql")
+            .read_text()
+            .lower()
+        )
         for queue in ("likely_male", "uncertain", "female_audit", "suppressed"):
             self.assertIn(f"'{queue}'", sql)
         self.assertIn("and suppression_enabled then 'suppressed'", sql)
@@ -145,17 +202,25 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("gate1b_queue <> 'suppressed'", sql)
 
     def test_gate1b_round_robins_cameras_and_prioritizes_hd_without_auto_request(self):
-        sql = Path("supabase/migrations/20260811220000_gate1b_triage.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811220000_gate1b_triage.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("row_number() over (partition by m.camera_id", sql)
         self.assertIn("hd_recommended boolean not null default false", sql)
         self.assertIn("order by h.priority desc, h.created_at, h.id", sql)
-        recording = sql.split("create or replace function public.deerid_record_gate1b_batch", 1)[1].split(
-            "create or replace function public.deerid_record_gate1b_label", 1
-        )[0]
+        recording = sql.split(
+            "create or replace function public.deerid_record_gate1b_batch", 1
+        )[1].split("create or replace function public.deerid_record_gate1b_label", 1)[0]
         self.assertNotIn("insert into deerid.hd_requests", recording)
 
     def test_gate1b_rpcs_are_service_role_only(self):
-        sql = Path("supabase/migrations/20260811220000_gate1b_triage.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811220000_gate1b_triage.sql")
+            .read_text()
+            .lower()
+        )
         signatures = (
             "public.deerid_gate1b_pending(text, text, integer)",
             "public.deerid_record_gate1b_batch(text, text, jsonb)",
@@ -163,11 +228,18 @@ class Gate1SchemaTests(unittest.TestCase):
             "public.deerid_gate1b_metrics()",
         )
         for signature in signatures:
-            self.assertIn(f"revoke all on function {signature} from public, anon, authenticated", sql)
+            self.assertIn(
+                f"revoke all on function {signature} from public, anon, authenticated",
+                sql,
+            )
             self.assertIn(f"grant execute on function {signature} to service_role", sql)
 
     def test_gate1b_library_fair_shares_the_bounded_payload_across_three_queues(self):
-        sql = Path("supabase/migrations/20260811223000_gate1b_queue_fair_share.sql").read_text().lower()
+        sql = (
+            Path("supabase/migrations/20260811223000_gate1b_queue_fair_share.sql")
+            .read_text()
+            .lower()
+        )
         self.assertIn("partition by case", sql)
         self.assertIn("then gate1b_queue", sql)
         self.assertIn("order by review_priority, queue_row, queue_priority", sql)
