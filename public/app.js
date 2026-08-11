@@ -202,7 +202,8 @@ function renderPipeline() {
     'pipeline-assessed': pipeline.assessed_thumbnails,
     'pipeline-review': pipeline.review_representatives,
     'pipeline-duplicates': pipeline.event_duplicates,
-    'pipeline-archived': pipeline.archived,
+    'pipeline-blanks': pipeline.blank_or_below_threshold,
+    'pipeline-nontarget': pipeline.confident_non_target,
     'pipeline-pending': pipeline.pending_thumbnails
   };
   Object.entries(values).forEach(([id, value]) => { $(id).textContent = n(value); });

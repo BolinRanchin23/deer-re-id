@@ -62,6 +62,12 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("grant execute", sql)
         self.assertIn("service_role", sql)
 
+    def test_pipeline_funnel_breaks_archives_into_blank_and_non_target_reasons(self):
+        sql = Path("supabase/migrations/20260811154500_gate1_funnel_reasons.sql").read_text().lower()
+        self.assertIn("blank_or_below_threshold", sql)
+        self.assertIn("confident_non_target", sql)
+        self.assertIn("reason", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

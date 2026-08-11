@@ -96,7 +96,7 @@
     .funnel-value { margin-top: 14px; font-size: 34px; line-height: 1; letter-spacing: -.045em; }
     .funnel-label { margin-top: 8px; color: var(--muted); font-size: 12px; }
     .funnel-arrow { align-self: center; color: var(--faint); font-size: 24px; }
-    .funnel-outcomes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+    .funnel-outcomes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
     .funnel-outcome { padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; }
     .funnel-outcome strong { color: var(--ink); font: 600 17px/1 ui-monospace, monospace; }
     .photo-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -248,7 +248,8 @@
           </div>
           <div class="funnel-outcomes">
             <article class="card funnel-outcome"><span>Burst duplicates suppressed</span><strong id="pipeline-duplicates">—</strong></article>
-            <article class="card funnel-outcome"><span>Confidently archived</span><strong id="pipeline-archived">—</strong></article>
+            <article class="card funnel-outcome"><span>Blank / below threshold</span><strong id="pipeline-blanks">—</strong></article>
+            <article class="card funnel-outcome"><span>Non-target wildlife</span><strong id="pipeline-nontarget">—</strong></article>
             <article class="card funnel-outcome"><span>Awaiting model</span><strong id="pipeline-pending">—</strong></article>
           </div>
         </section>
@@ -293,6 +294,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=4" defer></script>
+  <script src="/app.js?v=5" defer></script>
 </body>
 </html>

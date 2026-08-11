@@ -61,6 +61,8 @@ class MemoryCatalog:
             "review_representatives": 60,
             "event_duplicates": 30,
             "archived": 10,
+            "blank_or_below_threshold": 7,
+            "confident_non_target": 3,
             "unresolved_review": 59,
             "resolved_review": 1,
         }
@@ -187,7 +189,8 @@ class Gate1ReviewUiTests(unittest.TestCase):
         self.assertIn("Gate 1 narrowing", html)
         for element_id in (
             "pipeline-total", "pipeline-assessed", "pipeline-review",
-            "pipeline-duplicates", "pipeline-archived", "pipeline-pending",
+            "pipeline-duplicates", "pipeline-blanks", "pipeline-nontarget",
+            "pipeline-pending",
         ):
             self.assertIn(f'id="{element_id}"', html)
             self.assertIn(element_id, script)

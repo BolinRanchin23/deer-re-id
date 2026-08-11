@@ -290,6 +290,7 @@ def _sanitize_pipeline(value: Any) -> Dict[str, Any]:
     count_fields = (
         "total_thumbnails", "assessed_thumbnails", "pending_thumbnails",
         "review_representatives", "event_duplicates", "archived",
+        "blank_or_below_threshold", "confident_non_target",
         "unresolved_review", "resolved_review",
     )
     output: Dict[str, Any] = {"model_name": model_name, "model_version": model_version}
