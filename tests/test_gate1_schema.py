@@ -68,6 +68,34 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("confident_non_target", sql)
         self.assertIn("reason", sql)
 
+    def test_gate1_claims_are_atomic_leased_and_released(self):
+        sql = Path("supabase/migrations/20260811162000_gate1_claim_leases.sql").read_text().lower()
+        self.assertIn("create table deerid.gate1_claims", sql)
+        self.assertIn("pg_advisory_xact_lock", sql)
+        self.assertIn("leased_until", sql)
+        self.assertIn("claim_token", sql)
+        self.assertIn("deerid_release_gate1_claim", sql)
+        self.assertIn("grant execute", sql)
+        self.assertIn("service_role", sql)
+
+    def test_gate1_recording_is_fenced_and_claims_complete_events(self):
+        sql = Path("supabase/migrations/20260811163500_gate1_claim_fencing.sql").read_text().lower()
+        self.assertIn("media_ids uuid[]", sql)
+        self.assertIn("p_claim_token uuid", sql)
+        self.assertIn("for update", sql)
+        self.assertIn("delete from deerid.gate1_claims", sql)
+        self.assertIn("cardinality", sql)
+        self.assertIn("jsonb_array_length", sql)
+
+    def test_gate1_event_membership_is_persisted_before_claiming(self):
+        sql = Path("supabase/migrations/20260811165000_gate1_stable_events.sql").read_text().lower()
+        self.assertIn("create table deerid.gate1_event_memberships", sql)
+        self.assertIn("primary key (media_id)", sql)
+        self.assertIn("deerid_assign_gate1_events", sql)
+        self.assertIn("pg_advisory_xact_lock", sql)
+        self.assertIn("count(*) < 10", sql)
+        self.assertIn("gate1_event_memberships em", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

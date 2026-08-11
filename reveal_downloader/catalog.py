@@ -114,12 +114,24 @@ class SupabaseCatalog:
         )
 
     def record_gate1_batch(
-        self, model_name: str, model_version: str, results: list[dict[str, Any]]
+        self,
+        model_name: str,
+        model_version: str,
+        claim_token: str,
+        results: list[dict[str, Any]],
     ) -> Any:
         return self._rpc(
             "deerid_record_gate1_batch",
-            {"p_model_name": model_name, "p_model_version": model_version, "p_results": results},
+            {
+                "p_model_name": model_name,
+                "p_model_version": model_version,
+                "p_claim_token": claim_token,
+                "p_results": results,
+            },
         )
+
+    def release_gate1_claim(self, claim_token: str) -> Any:
+        return self._rpc("deerid_release_gate1_claim", {"p_claim_token": claim_token})
 
     def read_private_image(self, object_path: str, *, max_bytes: int) -> bytes:
         return self._archive.read_private_image(object_path, max_bytes=max_bytes)
