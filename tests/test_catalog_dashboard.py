@@ -51,6 +51,20 @@ class MemoryCatalog:
             }
         ]
 
+    def read_gate1_funnel(self, model_name, model_version):
+        return {
+            "model_name": model_name,
+            "model_version": model_version,
+            "total_thumbnails": 100,
+            "assessed_thumbnails": 100,
+            "pending_thumbnails": 0,
+            "review_representatives": 60,
+            "event_duplicates": 30,
+            "archived": 10,
+            "unresolved_review": 59,
+            "resolved_review": 1,
+        }
+
     def resolve_media_object(self, media_id):
         self.resolved = media_id
         return {
@@ -102,6 +116,9 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertRegex(payload["photos"][0]["preview_url"], r"^/api/library_preview\?token=")
         self.assertRegex(payload["photos"][0]["review_token"], r"^[0-9]+\.")
         self.assertEqual(payload["photos"][0]["gate1"]["route"], "review")
+        self.assertEqual(payload["pipeline"]["total_thumbnails"], 100)
+        self.assertEqual(payload["pipeline"]["review_representatives"], 60)
+        self.assertEqual(payload["pipeline"]["model_name"], "SpeciesNet")
         serialized = str(payload)
         self.assertNotIn("must-not-leak.jpg", serialized)
         self.assertNotIn("SUPABASE_SECRET_KEY", serialized)
@@ -163,6 +180,18 @@ class Gate1ReviewUiTests(unittest.TestCase):
         self.assertIn("/api/review", script)
         for action in ("request_hd", "keep_for_identity", "not_useful", "defer"):
             self.assertIn(action, script)
+
+    def test_overview_visualizes_the_gate1_narrowing_funnel(self):
+        html = Path("public/index.html").read_text()
+        script = Path("public/app.js").read_text()
+        self.assertIn("Gate 1 narrowing", html)
+        for element_id in (
+            "pipeline-total", "pipeline-assessed", "pipeline-review",
+            "pipeline-duplicates", "pipeline-archived", "pipeline-pending",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+            self.assertIn(element_id, script)
+        self.assertIn("Most recent 60 shown", html)
 
 
 if __name__ == "__main__":

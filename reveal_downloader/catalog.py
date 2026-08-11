@@ -23,6 +23,8 @@ LIBRARY_PREVIEW_SECONDS = 300
 LIBRARY_REVIEW_SECONDS = 900
 MAX_LIBRARY_PHOTOS = 60
 MAX_LIBRARY_PREVIEW_BYTES = 8 * 1024 * 1024
+GATE1_MODEL_NAME = "SpeciesNet"
+GATE1_MODEL_VERSION = "4.0.3a"
 _UUID = re.compile(
     r"\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
 )
@@ -85,6 +87,12 @@ class SupabaseCatalog:
     def read_camera_map(self) -> Any:
         return self._rpc("deerid_private_camera_map", {})
 
+    def read_gate1_funnel(self, model_name: str, model_version: str) -> Any:
+        return self._rpc(
+            "deerid_gate1_funnel",
+            {"p_model_name": model_name, "p_model_version": model_version},
+        )
+
     def resolve_media_object(self, media_id: str) -> Any:
         return self._rpc("deerid_private_media_object", {"p_media_id": media_id})
 
@@ -139,9 +147,14 @@ def handle_library(
         catalog.set_deadline(clock() + LIBRARY_DEADLINE_SECONDS, clock=clock)
         photos = _sanitize_photos(catalog.read_library(MAX_LIBRARY_PHOTOS), signing_key, current)
         cameras = _sanitize_cameras(catalog.read_camera_map())
+        pipeline = _sanitize_pipeline(
+            catalog.read_gate1_funnel(GATE1_MODEL_NAME, GATE1_MODEL_VERSION)
+        )
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
         return 503, {"ok": False, "error": "library unavailable"}
-    payload: Dict[str, Any] = {"ok": True, "photos": photos, "cameras": cameras}
+    payload: Dict[str, Any] = {
+        "ok": True, "photos": photos, "cameras": cameras, "pipeline": pipeline
+    }
     mapbox_token = environ.get("NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN", "").strip()
     if _MAPBOX_TOKEN.fullmatch(mapbox_token):
         payload["mapbox_access_token"] = mapbox_token
@@ -264,6 +277,29 @@ def _sanitize_cameras(value: Any) -> list[Dict[str, Any]]:
         if not isinstance(camera_id, str) or _UUID.fullmatch(camera_id) is None:
             raise StorageError("Private camera map is unavailable")
         output.append({name: item[name] for name in allowed if name in item})
+    return output
+
+
+def _sanitize_pipeline(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise StorageError("Gate 1 funnel is unavailable")
+    model_name = value.get("model_name")
+    model_version = value.get("model_version")
+    if model_name != GATE1_MODEL_NAME or model_version != GATE1_MODEL_VERSION:
+        raise StorageError("Gate 1 funnel is unavailable")
+    count_fields = (
+        "total_thumbnails", "assessed_thumbnails", "pending_thumbnails",
+        "review_representatives", "event_duplicates", "archived",
+        "unresolved_review", "resolved_review",
+    )
+    output: Dict[str, Any] = {"model_name": model_name, "model_version": model_version}
+    for field in count_fields:
+        count = value.get(field)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise StorageError("Gate 1 funnel is unavailable")
+        output[field] = count
+    if output["assessed_thumbnails"] + output["pending_thumbnails"] != output["total_thumbnails"]:
+        raise StorageError("Gate 1 funnel is unavailable")
     return output
 
 

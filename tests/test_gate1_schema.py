@@ -47,6 +47,21 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("/ 10", sql)
         self.assertIn("limit least(greatest(p_limit, 1), 50)", sql)
 
+    def test_pipeline_funnel_rpc_counts_each_gate_for_one_model_version(self):
+        sql = Path("supabase/migrations/20260811153000_gate1_funnel.sql").read_text().lower()
+        self.assertIn("function public.deerid_gate1_funnel", sql)
+        for field in (
+            "total_thumbnails", "assessed_thumbnails", "pending_thumbnails",
+            "review_representatives", "event_duplicates", "archived",
+            "unresolved_review", "resolved_review",
+        ):
+            self.assertIn(field, sql)
+        self.assertIn("m.variant = 'cloud_thumbnail'", sql)
+        self.assertIn("g.model_name = p_model_name", sql)
+        self.assertIn("g.model_version = p_model_version", sql)
+        self.assertIn("grant execute", sql)
+        self.assertIn("service_role", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

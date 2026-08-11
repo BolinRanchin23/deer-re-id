@@ -4,6 +4,7 @@ const formatDate = value => value ? new Date(value).toLocaleString([], {dateStyl
 
 let photos = [];
 let cameras = [];
+let pipeline = {};
 let mapboxToken = '';
 let cameraMap = null;
 let activeView = 'overview';
@@ -177,18 +178,37 @@ function renderFilteredPhotos() {
     if (labelState === 'labeled' && needsReview(item)) return false;
     return true;
   });
-  $('photo-summary').textContent = `${filtered.length} of ${photos.length} verified captures`;
+  const total = n(pipeline.total_thumbnails) || photos.length;
+  $('photo-summary').textContent = `${filtered.length} of ${photos.length} recent captures shown · ${total} total cataloged`;
   renderPhotoGrid($('library-view'), filtered);
 }
 
 function renderReview() {
   const queue = photos.filter(needsReview);
-  $('review-summary').textContent = `${queue.length} awaiting a human decision`;
+  const unresolved = n(pipeline.unresolved_review) || queue.length;
+  $('review-summary').textContent = queue.length < unresolved
+    ? `Showing ${queue.length} of ${unresolved} awaiting a human decision`
+    : `${unresolved} awaiting a human decision`;
   renderPhotoGrid($('review-grid'), queue, {
     review: true,
     emptyTitle: 'Review queue is clear',
     emptyCopy: 'Gate 1 has no unresolved model-selected photos.'
   });
+}
+
+function renderPipeline() {
+  const values = {
+    'pipeline-total': pipeline.total_thumbnails,
+    'pipeline-assessed': pipeline.assessed_thumbnails,
+    'pipeline-review': pipeline.review_representatives,
+    'pipeline-duplicates': pipeline.event_duplicates,
+    'pipeline-archived': pipeline.archived,
+    'pipeline-pending': pipeline.pending_thumbnails
+  };
+  Object.entries(values).forEach(([id, value]) => { $(id).textContent = n(value); });
+  const model = pipeline.model_name || 'Model';
+  const version = pipeline.model_version || 'unknown version';
+  $('pipeline-model').textContent = `${model} ${version} · one representative per five-second camera event`;
 }
 
 function collectProfiles() {
@@ -326,13 +346,16 @@ function showView(name) {
 function updateCatalogViews() {
   const review = photos.filter(needsReview);
   const profiles = collectProfiles();
-  $('catalog-count').textContent = photos.length;
-  $('review-count').textContent = review.length;
+  const total = n(pipeline.total_thumbnails) || photos.length;
+  const unresolved = n(pipeline.unresolved_review) || review.length;
+  $('catalog-count').textContent = total;
+  $('review-count').textContent = unresolved;
   $('camera-count').textContent = cameras.length;
-  $('review-nav-count').textContent = review.length;
+  $('review-nav-count').textContent = unresolved;
   $('deer-nav-count').textContent = profiles.length;
   $('camera-nav-count').textContent = cameras.length;
-  $('photo-nav-count').textContent = photos.length;
+  $('photo-nav-count').textContent = total;
+  renderPipeline();
   renderPhotoGrid($('recent-photos'), photos.slice(0, 8), {emptyTitle: 'No cataloged photos yet'});
   populateCameraFilter();
   renderFilteredPhotos();
@@ -348,6 +371,7 @@ async function fetchLibrary() {
   if (!response.ok || !data.ok) throw new Error('The photo catalog is temporarily unavailable.');
   photos = Array.isArray(data.photos) ? data.photos : [];
   cameras = Array.isArray(data.cameras) ? data.cameras : [];
+  pipeline = data.pipeline && typeof data.pipeline === 'object' ? data.pipeline : {};
   mapboxToken = typeof data.mapbox_access_token === 'string' ? data.mapbox_access_token : '';
   updateCatalogViews();
 }
