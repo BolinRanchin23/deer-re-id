@@ -180,6 +180,40 @@ class RevealClientTests(unittest.TestCase):
             {"size": 25, "page": 2, "includeWeatherData": "true", "cameraId": "cam-1"},
         )
 
+    def test_get_photos_derives_missing_utc_date_from_guarded_epoch_timestamp(self):
+        class MissingUtcTransport(FakeTransport):
+            def json_request(self, method, url, *, headers=None, payload=None, params=None):
+                if "cognito-idp" in url:
+                    return super().json_request(
+                        method, url, headers=headers, payload=payload, params=params
+                    )
+                return {
+                    "response": {
+                        "photos": [
+                            {
+                                "photoId": "p1",
+                                "createdTimestamp": 1767225600000,
+                                "photoTimestamp": "12312025185920",
+                            },
+                            {
+                                "photoId": "p2",
+                                "photoDateUtc": "2025-12-31T23:59:00Z",
+                                "createdTimestamp": 1767225600000,
+                            },
+                            {"photoId": "p3", "createdTimestamp": "invalid"},
+                        ]
+                    }
+                }
+
+        client = RevealClient("person@example.com", "secret", transport=MissingUtcTransport())
+
+        photos = client.get_photos()
+
+        self.assertEqual(photos[0]["photoDateUtc"], "2026-01-01T00:00:00Z")
+        self.assertEqual(photos[0]["createdTimestamp"], 1767225600000)
+        self.assertEqual(photos[1]["photoDateUtc"], "2025-12-31T23:59:00Z")
+        self.assertNotIn("photoDateUtc", photos[2])
+
     def test_get_photos_refreshes_an_expired_access_token(self):
         transport = FakeTransport()
         client = RevealClient("person@example.com", "secret", transport=transport)

@@ -272,7 +272,7 @@ class RevealClient:
             headers=self._headers(),
             params=params,
         )
-        return _response_items(response, "photos")
+        return [_normalize_photo_timestamp(photo) for photo in _response_items(response, "photos")]
 
     def get_cameras(self) -> List[Dict[str, Any]]:
         response = self._transport.json_request(
@@ -339,6 +339,29 @@ def _response_items(response: Any, key: str) -> List[Dict[str, Any]]:
     if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
         raise RevealError("Reveal API returned a malformed response")
     return items
+
+
+def _normalize_photo_timestamp(photo: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill REVEAL's occasionally omitted UTC photo date from its UTC creation epoch."""
+    existing = photo.get("photoDateUtc")
+    if isinstance(existing, str) and existing.strip():
+        return photo
+    created = photo.get("createdTimestamp")
+    if isinstance(created, bool) or not isinstance(created, (int, float)):
+        return photo
+    try:
+        derived = datetime.fromtimestamp(created / 1000, tz=timezone.utc)
+    except (OSError, OverflowError, TypeError, ValueError):
+        return photo
+    if not 2000 <= derived.year <= 2100:
+        return photo
+    normalized = dict(photo)
+    normalized["photoDateUtc"] = derived.isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )
+    if normalized["photoDateUtc"].endswith(".000Z"):
+        normalized["photoDateUtc"] = normalized["photoDateUtc"].replace(".000Z", "Z")
+    return normalized
 
 
 def _valid_token(value: Any) -> bool:
