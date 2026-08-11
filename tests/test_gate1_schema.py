@@ -296,6 +296,26 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("gp.model_name = policy.model_name", sql)
         self.assertIn("gp.model_version = policy.model_version", sql)
 
+    def test_validation_policy_has_immutable_safety_floors(self):
+        sql = (
+            Path(
+                "supabase/migrations/20260811231500_gate1b_validation_safety_floor.sql"
+            )
+            .read_text()
+            .lower()
+        )
+        for floor in (
+            "minimum_labels >= 100",
+            "minimum_buck_events >= 20",
+            "minimum_whitetail_labels >= 10",
+            "minimum_axis_labels >= 10",
+            "minimum_whitetail_buck_events >= 10",
+            "minimum_axis_buck_events >= 5",
+            "required_buck_recall >= 0.99",
+            "female_audit_percent >= 10",
+        ):
+            self.assertIn(floor, sql)
+
 
 if __name__ == "__main__":
     unittest.main()
