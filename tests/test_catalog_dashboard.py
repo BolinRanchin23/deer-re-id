@@ -1,8 +1,10 @@
 import unittest
+from pathlib import Path
 
 from reveal_downloader.catalog import (
     handle_library,
     handle_library_preview,
+    handle_review,
 )
 from reveal_downloader.supabase import _postgrest_auth_headers
 
@@ -11,6 +13,7 @@ class MemoryCatalog:
     def __init__(self):
         self.deadline = None
         self.resolved = None
+        self.reviewed = None
 
     def set_deadline(self, deadline, clock=None):
         self.deadline = deadline
@@ -28,6 +31,8 @@ class MemoryCatalog:
                 "height": 720,
                 "labels": [{"namespace": "species", "label": "deer", "status": "suggested"}],
                 "animals": [],
+                "gate1": {"id": 17, "review_version": 0, "route": "review", "reason": "target_species", "animal_confidence": 0.98, "species_label": "white-tailed deer", "species_confidence": 0.99, "model_name": "SpeciesNet", "model_version": "4.0.3a"},
+                "review_decision": None,
                 "object_path": "must-not-leak.jpg",
             }
         ][:limit]
@@ -56,6 +61,10 @@ class MemoryCatalog:
     def read_private_image(self, object_path, max_bytes):
         self.read_args = (object_path, max_bytes)
         return b"\xff\xd8private\xff\xd9"
+
+    def record_review(self, media_id, assessment_id, review_version, action, note):
+        self.reviewed = (media_id, assessment_id, review_version, action, note)
+        return {"ok": True, "media_id": media_id, "action": action}
 
 
 class PrivateLibraryTests(unittest.TestCase):
@@ -91,6 +100,8 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(len(payload["cameras"]), 1)
         self.assertEqual(payload["mapbox_access_token"], "pk.mapbox-browser-token")
         self.assertRegex(payload["photos"][0]["preview_url"], r"^/api/library_preview\?token=")
+        self.assertRegex(payload["photos"][0]["review_token"], r"^[0-9]+\.")
+        self.assertEqual(payload["photos"][0]["gate1"]["route"], "review")
         serialized = str(payload)
         self.assertNotIn("must-not-leak.jpg", serialized)
         self.assertNotIn("SUPABASE_SECRET_KEY", serialized)
@@ -121,6 +132,37 @@ class PrivateLibraryTests(unittest.TestCase):
             )[0],
             404,
         )
+
+    def test_signed_review_token_records_allowed_action_and_rejects_tampering(self):
+        catalog = MemoryCatalog()
+        _, payload = handle_library(
+            self.environment(), catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
+        )
+        token = payload["photos"][0]["review_token"]
+        status, result = handle_review(
+            self.environment(), token, "request_hd", "Best broadside",
+            catalog_factory=lambda *_: catalog, epoch_now=1_786_200_001,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertEqual(catalog.reviewed, ("11111111-1111-4111-8111-111111111111", 17, 0, "request_hd", "Best broadside"))
+        self.assertEqual(
+            handle_review(self.environment(), token + "x", "defer", "", catalog_factory=lambda *_: catalog, epoch_now=1_786_200_001)[0],
+            404,
+        )
+        self.assertEqual(
+            handle_review(self.environment(), token, "delete", "", catalog_factory=lambda *_: catalog, epoch_now=1_786_200_001)[0],
+            400,
+        )
+
+
+class Gate1ReviewUiTests(unittest.TestCase):
+    def test_review_ui_is_model_selected_and_actionable(self):
+        script = Path("public/app.js").read_text()
+        self.assertIn("gate1.route === 'review'", script)
+        self.assertIn("/api/review", script)
+        for action in ("request_hd", "keep_for_identity", "not_useful", "defer"):
+            self.assertIn(action, script)
 
 
 if __name__ == "__main__":

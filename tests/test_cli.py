@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from reveal_downloader.cli import build_parser, run
@@ -35,7 +36,7 @@ class CliTests(unittest.TestCase):
             created.append(FakeClient(username, password))
             return created[-1]
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with patch.dict("os.environ", {"TACTACAM_PASSWORD": ""}), tempfile.TemporaryDirectory() as tmp:
             exit_code = run(
                 ["sync", "--username", "person@example.com", "--output", tmp],
                 client_factory=factory,

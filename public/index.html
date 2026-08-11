@@ -120,9 +120,11 @@
     .empty strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 16px; font-weight: 580; }
     .review-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
     .review-card .photo-meta { display: grid; gap: 9px; }
-    .review-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .gate1-evidence { color: var(--muted); font-size: 11px; }
+    .review-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
     .review-actions button { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: var(--panel-2); cursor: pointer; font-size: 11px; }
     .review-actions button:hover { color: var(--ink); border-color: var(--line-strong); }
+    .review-actions button:disabled { cursor: wait; opacity: .45; }
     .deer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .deer-card { overflow: hidden; }
     .deer-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
@@ -220,7 +222,7 @@
         <div class="view-head"><div><p class="eyebrow">Ranch workspace</p><h1>What happened in the field?</h1><p class="view-copy">A single view of recent captures, cameras, and the immutable archive behind them.</p></div><div id="updated" class="updated">Loading field data…</div></div>
         <div class="metrics">
           <article class="card metric"><div class="metric-label">Photos cataloged</div><div id="catalog-count" class="metric-value">—</div><div class="metric-detail">Verified cloud captures</div></article>
-          <article class="card metric"><div class="metric-label">Needs review</div><div id="review-count" class="metric-value">—</div><div class="metric-detail">No confirmed label yet</div></article>
+          <article class="card metric"><div class="metric-label">Needs review</div><div id="review-count" class="metric-value">—</div><div class="metric-detail">Gate 1 selected</div></article>
           <article class="card metric"><div class="metric-label">Cameras reporting</div><div id="camera-count" class="metric-value">—</div><div class="metric-detail">Latest mapped cameras</div></article>
           <article class="card metric"><div class="metric-label">Archive health</div><div id="health" class="metric-value">—</div><div id="health-detail" class="metric-detail">Reading durable status</div></article>
         </div>
@@ -265,6 +267,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=2" defer></script>
+  <script src="/app.js?v=3" defer></script>
 </body>
 </html>

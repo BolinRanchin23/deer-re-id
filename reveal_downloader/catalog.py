@@ -20,6 +20,7 @@ from .supabase import (
 
 LIBRARY_DEADLINE_SECONDS = 8.0
 LIBRARY_PREVIEW_SECONDS = 300
+LIBRARY_REVIEW_SECONDS = 900
 MAX_LIBRARY_PHOTOS = 60
 MAX_LIBRARY_PREVIEW_BYTES = 8 * 1024 * 1024
 _UUID = re.compile(
@@ -86,6 +87,31 @@ class SupabaseCatalog:
 
     def resolve_media_object(self, media_id: str) -> Any:
         return self._rpc("deerid_private_media_object", {"p_media_id": media_id})
+
+    def record_review(
+        self, media_id: str, assessment_id: int, review_version: int, action: str, note: str
+    ) -> Any:
+        return self._rpc(
+            "deerid_record_review_decision",
+            {
+                "p_media_id": media_id, "p_assessment_id": assessment_id,
+                "p_review_version": review_version, "p_action": action, "p_note": note or None,
+            },
+        )
+
+    def read_gate1_pending(self, model_name: str, model_version: str, limit: int = 60) -> Any:
+        return self._rpc(
+            "deerid_gate1_pending",
+            {"p_model_name": model_name, "p_model_version": model_version, "p_limit": limit},
+        )
+
+    def record_gate1_batch(
+        self, model_name: str, model_version: str, results: list[dict[str, Any]]
+    ) -> Any:
+        return self._rpc(
+            "deerid_record_gate1_batch",
+            {"p_model_name": model_name, "p_model_version": model_version, "p_results": results},
+        )
 
     def read_private_image(self, object_path: str, *, max_bytes: int) -> bytes:
         return self._archive.read_private_image(object_path, max_bytes=max_bytes)
@@ -160,6 +186,38 @@ def handle_library_preview(
     return 200, content_type, body
 
 
+def handle_review(
+    environ: Mapping[str, str],
+    token: str,
+    action: str,
+    note: str = "",
+    *,
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Record one bounded human decision for a model-selected photo."""
+    if action not in {"request_hd", "keep_for_identity", "not_useful", "defer"}:
+        return 400, {"ok": False, "error": "invalid action"}
+    if not isinstance(note, str) or len(note) > 500:
+        return 400, {"ok": False, "error": "invalid note"}
+    key = _signing_key(environ)
+    current = int(time.time()) if epoch_now is None else int(epoch_now)
+    capability = _verify_review_token(token, key, current) if key is not None else None
+    url = environ.get("SUPABASE_URL", "")
+    secret = environ.get("SUPABASE_SECRET_KEY", "")
+    if capability is None or not url or not secret:
+        return 404, {"ok": False, "error": "not found"}
+    media_id, assessment_id, review_version = capability
+    try:
+        catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos"))
+        result = catalog.record_review(media_id, assessment_id, review_version, action, note.strip())
+        if not isinstance(result, Mapping) or not result.get("ok"):
+            raise StorageError("Review decision failed")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
+        return 503, {"ok": False, "error": "review unavailable"}
+    return 200, {"ok": True, "media_id": media_id, "action": action}
+
+
 def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
     if not isinstance(value, list) or len(value) > MAX_LIBRARY_PHOTOS:
         raise StorageError("Private library is unavailable")
@@ -167,6 +225,7 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
     allowed = {
         "id", "captured_at", "camera_id", "camera_name", "variant", "width", "height",
         "labels", "animals", "hd_photo", "has_headshot", "battery_level", "signal_level",
+        "gate1", "review_decision",
     }
     for item in value:
         media_id = item.get("id") if isinstance(item, Mapping) else None
@@ -174,6 +233,20 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
             raise StorageError("Private library is unavailable")
         safe = {name: item[name] for name in allowed if name in item}
         safe["preview_url"] = f"/api/library_preview?token={_sign_media_token(media_id, now + LIBRARY_PREVIEW_SECONDS, key)}"
+        gate1 = safe.get("gate1")
+        decision = safe.get("review_decision")
+        if (
+            isinstance(gate1, Mapping)
+            and gate1.get("route") == "review"
+            and (decision is None or (isinstance(decision, Mapping) and decision.get("action") == "defer"))
+        ):
+            assessment_id = gate1.get("id")
+            review_version = gate1.get("review_version")
+            if not isinstance(assessment_id, int) or assessment_id < 1 or not isinstance(review_version, int) or review_version < 0:
+                raise StorageError("Private library is unavailable")
+            safe["review_token"] = _sign_review_token(
+                media_id, assessment_id, review_version, now + LIBRARY_REVIEW_SECONDS, key
+            )
         output.append(safe)
     return output
 
@@ -203,6 +276,40 @@ def _sign_media_token(media_id: str, expires: int, key: bytes) -> str:
     payload = f"{expires}.{media_id}"
     signature = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
+
+
+def _sign_review_token(media_id: str, assessment_id: int, review_version: int, expires: int, key: bytes) -> str:
+    payload = f"{expires}.review.{media_id}.{assessment_id}.{review_version}"
+    signature = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _verify_review_token(token: str, key: bytes, now: int) -> Optional[Tuple[str, int, int]]:
+    if not isinstance(token, str) or len(token) > 210:
+        return None
+    parts = token.split(".")
+    if len(parts) != 6:
+        return None
+    expires_text, purpose, media_id, assessment_text, version_text, supplied = parts
+    if (
+        purpose != "review"
+        or not expires_text.isdigit()
+        or _UUID.fullmatch(media_id) is None
+        or not assessment_text.isdigit()
+        or not version_text.isdigit()
+        or re.fullmatch(r"[0-9a-f]{64}", supplied) is None
+    ):
+        return None
+    expires = int(expires_text)
+    if expires < now or expires > now + LIBRARY_REVIEW_SECONDS + 30:
+        return None
+    assessment_id = int(assessment_text)
+    review_version = int(version_text)
+    if assessment_id < 1 or review_version < 0:
+        return None
+    payload = f"{expires}.review.{media_id}.{assessment_id}.{review_version}"
+    expected = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
+    return (media_id, assessment_id, review_version) if hmac.compare_digest(expected, supplied) else None
 
 
 def _verify_media_token(token: str, key: bytes, now: int) -> Optional[str]:

@@ -6,6 +6,7 @@ from pathlib import Path
 from api.status import handler as StatusHandler
 from api.library import handler as LibraryHandler
 from api.library_preview import handler as LibraryPreviewHandler
+from api.review import handler as ReviewHandler
 
 
 class DashboardHttpAdapterTests(unittest.TestCase):
@@ -13,6 +14,7 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertTrue(issubclass(StatusHandler, BaseHTTPRequestHandler))
         self.assertTrue(issubclass(LibraryHandler, BaseHTTPRequestHandler))
         self.assertTrue(issubclass(LibraryPreviewHandler, BaseHTTPRequestHandler))
+        self.assertTrue(issubclass(ReviewHandler, BaseHTTPRequestHandler))
 
     def test_root_homepage_contains_operational_dashboard_shell(self):
         html = Path("public/index.html").read_text(encoding="utf-8")
@@ -44,7 +46,7 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn('id="workspace-shell"', html)
         self.assertNotIn("sessionStorage", html + app_js)
         self.assertNotIn("<script>", html)
-        self.assertIn('<script src="/app.js?v=2" defer></script>', html)
+        self.assertIn('<script src="/app.js?v=3" defer></script>', html)
         self.assertNotIn("GOOGLE_MAPS_BROWSER_KEY", html)
 
     def test_vercel_config_sets_static_dashboard_security_headers_without_cron(self):
@@ -52,6 +54,7 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertNotIn("crons", config)
         self.assertIn("api/library.py", config["functions"])
         self.assertIn("api/library_preview.py", config["functions"])
+        self.assertIn("api/review.py", config["functions"])
         self.assertNotIn("api/auth.py", config["functions"])
         root = next(item for item in config["headers"] if item["source"] == "/")
         headers = {item["key"]: item["value"] for item in root["headers"]}

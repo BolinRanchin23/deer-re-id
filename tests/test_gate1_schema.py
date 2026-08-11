@@ -1,0 +1,45 @@
+import unittest
+from pathlib import Path
+
+
+class Gate1SchemaTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        migrations = sorted(Path("supabase/migrations").glob("*_gate1_review.sql"))
+        if not migrations:
+            raise AssertionError("Gate 1 migration is missing")
+        cls.sql = migrations[-1].read_text()
+
+    def test_append_only_evidence_and_human_action_tables_exist(self):
+        for table in ("gate1_assessments", "review_decisions", "hd_requests"):
+            self.assertIn(f"create table deerid.{table}", self.sql)
+        self.assertIn("enable row level security", self.sql)
+
+    def test_service_role_rpcs_cover_worker_review_and_library(self):
+        for function in (
+            "deerid_gate1_pending",
+            "deerid_record_gate1_batch",
+            "deerid_record_review_decision",
+            "deerid_private_library",
+        ):
+            self.assertIn(f"function public.{function}", self.sql)
+        self.assertIn("grant execute", self.sql)
+        self.assertIn("service_role", self.sql)
+
+    def test_request_hd_action_is_idempotently_queued(self):
+        self.assertIn("request_hd", self.sql)
+        self.assertIn("on conflict (media_id) do nothing", self.sql.lower())
+
+    def test_hardening_migration_claims_stable_events_and_one_time_reviews(self):
+        hardening = sorted(Path("supabase/migrations").glob("*_gate1_hardening.sql"))[-1].read_text().lower()
+        self.assertIn("gate1_assessment_model_once_idx", hardening)
+        self.assertIn("gate1_review_state", hardening)
+        self.assertIn("p_review_version", hardening)
+        self.assertIn("stale or resolved review capability", hardening)
+        self.assertIn("event_start", hardening)
+        self.assertIn("candidate_events", hardening)
+        self.assertIn("queue_priority", hardening)
+
+
+if __name__ == "__main__":
+    unittest.main()

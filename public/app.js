@@ -17,7 +17,27 @@ function photoAnimals(item) {
 }
 
 function needsReview(item) {
-  return photoLabels(item).length === 0 && photoAnimals(item).length === 0;
+  const gate1 = item && item.gate1;
+  const decision = item && item.review_decision;
+  return Boolean(gate1 && gate1.route === 'review' && item.review_token && (!decision || decision.action === 'defer'));
+}
+
+async function submitReview(item, action, card) {
+  const buttons = card.querySelectorAll('button');
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const response = await fetch('/api/review', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token: item.review_token, action})
+    });
+    const data = await response.json().catch(() => ({ok: false}));
+    if (!response.ok || !data.ok) throw new Error('The review decision could not be saved.');
+    await fetchLibrary();
+  } catch (error) {
+    buttons.forEach(button => { button.disabled = false; });
+    showError(error.message || 'The review decision could not be saved.');
+  }
 }
 
 function setHealth(value) {
@@ -86,6 +106,32 @@ function makePhotoCard(item, options = {}) {
   if (needsReview(item)) chips.appendChild(makeChip('Needs review', 'review'));
   if (item.variant) chips.appendChild(makeChip(item.variant === 'cloud_thumbnail' ? 'Cloud thumbnail' : String(item.variant).replaceAll('_', ' ')));
   meta.append(title, captured, chips);
+  if (options.review && item.gate1) {
+    const evidence = document.createElement('div');
+    evidence.className = 'gate1-evidence';
+    const species = item.gate1.species_label || 'Uncertain animal';
+    const confidence = Math.round(100 * Number(item.gate1.species_confidence || item.gate1.animal_confidence || 0));
+    evidence.textContent = `${species} · ${confidence}% · ${String(item.gate1.reason || 'model selected').replaceAll('_', ' ')}`;
+    const actions = document.createElement('div');
+    actions.className = 'review-actions';
+    [
+      ['request_hd', 'Request HD'],
+      ['keep_for_identity', 'Keep for ID'],
+      ['not_useful', 'Not useful'],
+      ['defer', 'Defer']
+    ].forEach(([action, label]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.reviewAction = action;
+      button.textContent = label;
+      button.addEventListener('click', event => {
+        event.stopPropagation();
+        submitReview(item, action, card);
+      });
+      actions.appendChild(button);
+    });
+    meta.append(evidence, actions);
+  }
   card.append(image, meta);
   return card;
 }
@@ -141,7 +187,7 @@ function renderReview() {
   renderPhotoGrid($('review-grid'), queue, {
     review: true,
     emptyTitle: 'Review queue is clear',
-    emptyCopy: 'Every cataloged photo has a label or deer association.'
+    emptyCopy: 'Gate 1 has no unresolved model-selected photos.'
   });
 }
 

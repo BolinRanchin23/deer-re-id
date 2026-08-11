@@ -16,6 +16,10 @@
     "api/library_preview.py": {
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/review.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     }
   },
   "headers": [
