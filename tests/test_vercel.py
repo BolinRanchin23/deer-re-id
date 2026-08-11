@@ -25,9 +25,10 @@ class FakeArchive:
         self.progress_skipped = 0
         self.progress_failed = 0
 
-    def sync(self, client, *, page_size, max_pages, deadline):
+    def sync(self, client, *, page_size, max_pages, start_page, deadline):
         from reveal_downloader.archive import SyncResult
         type(self).deadline = deadline
+        type(self).start_page = start_page
         return SyncResult(downloaded=2, skipped=3, failed=0)
 
     def write_dashboard_run(self, run):
@@ -71,7 +72,7 @@ class VercelSyncTests(unittest.TestCase):
             failure_stages = {"image_host": 2}
             failure_hosts = {"cdn.example.test": 2}
 
-            def sync(self, client, *, page_size, max_pages, deadline):
+            def sync(self, client, *, page_size, max_pages, start_page, deadline):
                 from reveal_downloader.archive import SyncResult
 
                 return SyncResult(downloaded=0, skipped=0, failed=2)
@@ -108,6 +109,7 @@ class VercelSyncTests(unittest.TestCase):
         status, payload = handle_sync(
             environ,
             "Bearer cron-secret-at-least-16",
+            start_page=7,
             client_factory=FakeClient,
             archive_factory=FakeArchive,
         )
@@ -115,6 +117,8 @@ class VercelSyncTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["downloaded"], 2)
         self.assertEqual(payload["skipped"], 3)
+        self.assertEqual(payload["processed"], 5)
+        self.assertEqual(FakeArchive.start_page, 7)
         deadline = FakeArchive.deadline
         self.assertIsInstance(deadline, float)
         assert isinstance(deadline, float)
@@ -152,7 +156,7 @@ class VercelSyncTests(unittest.TestCase):
 
     def test_upstream_failure_is_recorded_without_exposing_details(self):
         class FailingArchive(FakeArchive):
-            def sync(self, client, *, page_size, max_pages, deadline):
+            def sync(self, client, *, page_size, max_pages, start_page, deadline):
                 self.progress_downloaded = 2
                 self.progress_skipped = 1
                 self.progress_failed = 1
@@ -185,7 +189,7 @@ class VercelSyncTests(unittest.TestCase):
 
     def test_storage_failure_is_reported_separately_without_details(self):
         class FailingStorageArchive(FakeArchive):
-            def sync(self, client, *, page_size, max_pages, deadline):
+            def sync(self, client, *, page_size, max_pages, start_page, deadline):
                 raise StorageError("Supabase bucket setup failed with HTTP 400")
 
         status, payload = handle_sync(
@@ -215,7 +219,7 @@ class VercelSyncTests(unittest.TestCase):
 
     def test_object_read_failure_reports_only_safe_stage_and_http_status(self):
         class ObjectReadFailingArchive(FakeArchive):
-            def sync(self, client, *, page_size, max_pages, deadline):
+            def sync(self, client, *, page_size, max_pages, start_page, deadline):
                 raise StorageError(
                     "Supabase object read failed with HTTP 400",
                     http_status=400,

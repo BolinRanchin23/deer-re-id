@@ -1,7 +1,18 @@
-name: Manual Production Sync
+name: Reveal Production Sync
 
 on:
   workflow_dispatch:
+    inputs:
+      start_page:
+        description: First REVEAL page to ingest
+        required: true
+        default: "0"
+      page_count:
+        description: Number of 10-photo pages to sweep
+        required: true
+        default: "60"
+  schedule:
+    - cron: "*/15 * * * *"
 
 permissions:
   contents: read
@@ -12,21 +23,50 @@ concurrency:
 
 jobs:
   sync:
-    name: Trigger one bounded Reveal sync
+    name: Sweep bounded REVEAL pages
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 45
     steps:
       - name: Invoke secured production endpoint
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_START_PAGE: ${{ inputs.start_page }}
+          INPUT_PAGE_COUNT: ${{ inputs.page_count }}
         run: |
+          set -euo pipefail
           test -n "$CRON_SECRET"
-          status="$(curl --silent --show-error \
-            --output response.json \
-            --write-out '%{http_code}' \
-            --max-time 75 \
-            --header "Authorization: Bearer ${CRON_SECRET}" \
-            https://deer-re-id.vercel.app/api/sync)"
-          python -m json.tool response.json
-          test "$status" -ge 200
-          test "$status" -lt 300
+
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            start_page=0
+            page_count=5
+          else
+            start_page="${INPUT_START_PAGE:-0}"
+            page_count="${INPUT_PAGE_COUNT:-60}"
+          fi
+
+          [[ "$start_page" =~ ^[0-9]+$ ]]
+          [[ "$page_count" =~ ^[0-9]+$ ]]
+          test "$start_page" -le 1000
+          test "$page_count" -ge 1
+          test "$page_count" -le 100
+
+          final_page=$((start_page + page_count))
+          for ((page=start_page; page<final_page; page++)); do
+            status="$(curl --silent --show-error \
+              --output response.json \
+              --write-out '%{http_code}' \
+              --max-time 75 \
+              --header "Authorization: Bearer $CRON_SECRET" \
+              "https://deer-re-id.vercel.app/api/sync?page=$page")"
+            python -m json.tool response.json
+            test "$status" -ge 200
+            test "$status" -lt 300
+
+            processed="$(python -c 'import json; print(int(json.load(open("response.json"))["processed"]))')"
+            if [ "$processed" -eq 0 ]; then
+              echo "REVEAL page $page was empty; catch-up is complete."
+              break
+            fi
+            sleep 2
+          done

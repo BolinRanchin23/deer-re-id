@@ -85,6 +85,29 @@ class FakeRevealClient:
 
 
 class SupabaseArchiveTests(unittest.TestCase):
+    def test_sync_can_start_at_a_bounded_reveal_page(self):
+        class PagedClient(FakeRevealClient):
+            def __init__(self):
+                super().__init__()
+                self.pages = []
+
+            def get_photos(self, *, size, page, camera_id=None):
+                self.pages.append(page)
+                photo = dict(self.photo)
+                photo["photoId"] = f"p{page}"
+                return [photo]
+
+        client = PagedClient()
+        archive = SupabaseArchive(
+            "https://project.supabase.co",
+            "sb_secret_test",
+            transport=FakeStorageTransport(),
+        )
+
+        archive.sync(client, page_size=1, max_pages=2, start_page=7)
+
+        self.assertEqual(client.pages, [7, 8])
+
     def test_individual_photo_failures_are_safely_categorized(self):
         class RejectedImageClient(FakeRevealClient):
             def download(self, url):

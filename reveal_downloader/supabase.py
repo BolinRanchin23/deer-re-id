@@ -176,6 +176,7 @@ class SupabaseArchive:
         camera_id: Optional[str] = None,
         page_size: int = 100,
         max_pages: int = 2,
+        start_page: int = 0,
         deadline: Optional[float] = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> SyncResult:
@@ -197,9 +198,10 @@ class SupabaseArchive:
         self.failure_stages = {}
         self.failure_hosts = {}
         catalog_items = []
-        page = 0
+        page = start_page
+        final_page = start_page + max_pages if max_pages > 0 else None
         seen_pages = set()
-        while max_pages <= 0 or page < max_pages:
+        while final_page is None or page < final_page:
             check_deadline()
             photos = client.get_photos(size=page_size, page=page, camera_id=camera_id)
             if not photos:

@@ -14,10 +14,13 @@ def handle_sync(
     environ: Mapping[str, str],
     authorization: Optional[str],
     *,
+    start_page: int = 0,
     client_factory: Callable[[str, str], Any] = RevealClient,
     archive_factory: Callable[[str, str, str], Any] = SupabaseArchive,
 ) -> Tuple[int, Dict[str, Any]]:
     """Validate a cron request and run one bounded Supabase sync."""
+    if isinstance(start_page, bool) or not isinstance(start_page, int) or not 0 <= start_page <= 1000:
+        return 400, {"ok": False, "error": "invalid page"}
     cron_secret = environ.get("CRON_SECRET", "")
     if not cron_secret:
         return 503, {"ok": False, "error": "CRON_SECRET is not configured"}
@@ -65,6 +68,7 @@ def handle_sync(
             client,
             page_size=page_size,
             max_pages=max_pages,
+            start_page=start_page,
             deadline=time.monotonic() + 45,
         )
         status_recorded = _record_status(
@@ -79,6 +83,7 @@ def handle_sync(
             "downloaded": result.downloaded,
             "skipped": result.skipped,
             "failed": result.failed,
+            "processed": result.downloaded + result.skipped + result.failed,
             "failure_stages": dict(getattr(archive, "failure_stages", {})),
             "failure_hosts": dict(getattr(archive, "failure_hosts", {})),
             "status_recorded": status_recorded,
