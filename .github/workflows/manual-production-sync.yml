@@ -57,6 +57,10 @@ jobs:
               --output response.json \
               --write-out '%{http_code}' \
               --max-time 75 \
+              --retry 4 \
+              --retry-all-errors \
+              --retry-delay 3 \
+              --retry-max-time 240 \
               --header "Authorization: Bearer $CRON_SECRET" \
               "https://deer-re-id.vercel.app/api/sync?page=$page")"
             python -m json.tool response.json

@@ -13,6 +13,8 @@ class ManualProductionWorkflowTests(unittest.TestCase):
         self.assertIn("secrets.CRON_SECRET", workflow)
         self.assertIn("https://deer-re-id.vercel.app/api/sync", workflow)
         self.assertIn("?page=", workflow)
+        self.assertIn("--retry 4", workflow)
+        self.assertIn("--retry-all-errors", workflow)
         self.assertIn("page_count", workflow)
         self.assertNotIn("cron-secret", workflow.lower())
 
