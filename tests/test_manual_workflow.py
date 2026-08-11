@@ -9,7 +9,7 @@ class ManualProductionWorkflowTests(unittest.TestCase):
         )
         self.assertIn("workflow_dispatch", workflow)
         self.assertIn("schedule:", workflow)
-        self.assertIn("*/15 * * * *", workflow)
+        self.assertIn("12,27,42,57 * * * *", workflow)
         self.assertIn("secrets.CRON_SECRET", workflow)
         self.assertIn("https://deer-re-id.vercel.app/api/sync", workflow)
         self.assertIn("?page=", workflow)
