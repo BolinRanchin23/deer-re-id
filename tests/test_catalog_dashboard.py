@@ -2,10 +2,12 @@ import unittest
 from pathlib import Path
 
 from reveal_downloader.catalog import (
+    _sanitize_photos,
     handle_library,
     handle_library_preview,
     handle_review,
 )
+from reveal_downloader.client import HDRequestRejected, RevealError
 from reveal_downloader.supabase import _postgrest_auth_headers
 
 
@@ -14,6 +16,9 @@ class MemoryCatalog:
         self.deadline = None
         self.resolved = None
         self.reviewed = None
+        self.hd_completed = None
+        self.hd_failed = None
+        self.hd_unknown = None
 
     def set_deadline(self, deadline, clock=None):
         self.deadline = deadline
@@ -81,6 +86,28 @@ class MemoryCatalog:
     def record_review(self, media_id, assessment_id, review_version, action, note):
         self.reviewed = (media_id, assessment_id, review_version, action, note)
         return {"ok": True, "media_id": media_id, "action": action}
+
+    def begin_hd_request(self, media_id, assessment_id, review_version, note):
+        self.hd_begun = (media_id, assessment_id, review_version, note)
+        return {
+            "ok": True,
+            "should_request": True,
+            "request_token": "33333333-3333-4333-8333-333333333333",
+            "provider_photo_id": "reveal-photo-1",
+            "status": "requesting",
+        }
+
+    def complete_hd_request(self, request_token):
+        self.hd_completed = request_token
+        return {"ok": True, "status": "submitted"}
+
+    def fail_hd_request(self, request_token, error_code):
+        self.hd_failed = (request_token, error_code)
+        return {"ok": True, "status": "failed"}
+
+    def mark_hd_request_unknown(self, request_token, error_code):
+        self.hd_unknown = (request_token, error_code)
+        return {"ok": True, "status": "unknown"}
 
 
 class PrivateLibraryTests(unittest.TestCase):
@@ -152,6 +179,22 @@ class PrivateLibraryTests(unittest.TestCase):
             404,
         )
 
+    def test_pending_hd_item_is_not_issued_an_actionable_review_token(self):
+        photos = _sanitize_photos(
+            [{
+                "id": "11111111-1111-4111-8111-111111111111",
+                "gate1": {
+                    "id": 17, "route": "review", "review_version": 0,
+                    "pending_hd": True,
+                },
+                "review_decision": None,
+            }],
+            b"0123456789abcdef",
+            1_786_200_000,
+        )
+        self.assertNotIn("review_token", photos[0])
+        self.assertTrue(photos[0]["gate1"]["pending_hd"])
+
     def test_signed_review_token_records_allowed_action_and_rejects_tampering(self):
         catalog = MemoryCatalog()
         _, payload = handle_library(
@@ -159,12 +202,12 @@ class PrivateLibraryTests(unittest.TestCase):
         )
         token = payload["photos"][0]["review_token"]
         status, result = handle_review(
-            self.environment(), token, "request_hd", "Best broadside",
+            self.environment(), token, "keep_for_identity", "Best broadside",
             catalog_factory=lambda *_: catalog, epoch_now=1_786_200_001,
         )
         self.assertEqual(status, 200)
         self.assertTrue(result["ok"])
-        self.assertEqual(catalog.reviewed, ("11111111-1111-4111-8111-111111111111", 17, 0, "request_hd", "Best broadside"))
+        self.assertEqual(catalog.reviewed, ("11111111-1111-4111-8111-111111111111", 17, 0, "keep_for_identity", "Best broadside"))
         self.assertEqual(
             handle_review(self.environment(), token + "x", "defer", "", catalog_factory=lambda *_: catalog, epoch_now=1_786_200_001)[0],
             404,
@@ -174,6 +217,114 @@ class PrivateLibraryTests(unittest.TestCase):
             400,
         )
 
+    def test_request_hd_calls_reveal_and_finalizes_durable_request(self):
+        class FakeReveal:
+            requested = None
+
+            def __init__(self, username, password):
+                self.credentials_present = bool(username and password)
+
+            def set_deadline(self, deadline, clock=None):
+                self.deadline = deadline
+
+            def request_hd_photos(self, photo_ids):
+                type(self).requested = photo_ids
+                return {"accepted": len(photo_ids)}
+
+        environment = {
+            **self.environment(),
+            "TACTACAM_USERNAME": "owner@example.com",
+            "TACTACAM_PASSWORD": "secret",
+        }
+        catalog = MemoryCatalog()
+        _, payload = handle_library(
+            environment, catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
+        )
+        token = payload["photos"][0]["review_token"]
+
+        status, result = handle_review(
+            environment, token, "request_hd", "Best broadside",
+            catalog_factory=lambda *_: catalog, reveal_factory=FakeReveal,
+            epoch_now=1_786_200_001,
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["request_status"], "submitted")
+        self.assertEqual(FakeReveal.requested, ["reveal-photo-1"])
+        self.assertEqual(catalog.hd_completed, "33333333-3333-4333-8333-333333333333")
+        self.assertIsNone(catalog.reviewed)
+
+    def test_request_hd_failure_is_retryable_and_not_finalized(self):
+        class FailingReveal:
+            def __init__(self, username, password):
+                pass
+
+            def set_deadline(self, deadline, clock=None):
+                pass
+
+            def request_hd_photos(self, photo_ids):
+                raise HDRequestRejected("private provider detail")
+
+        environment = {
+            **self.environment(),
+            "TACTACAM_USERNAME": "owner@example.com",
+            "TACTACAM_PASSWORD": "secret",
+        }
+        catalog = MemoryCatalog()
+        _, payload = handle_library(
+            environment, catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
+        )
+
+        status, result = handle_review(
+            environment, payload["photos"][0]["review_token"], "request_hd", "",
+            catalog_factory=lambda *_: catalog, reveal_factory=FailingReveal,
+            epoch_now=1_786_200_001,
+        )
+
+        self.assertEqual(status, 502)
+        self.assertEqual(result, {"ok": False, "error": "HD request failed"})
+        self.assertEqual(
+            catalog.hd_failed,
+            ("33333333-3333-4333-8333-333333333333", "provider_rejected"),
+        )
+        self.assertIsNone(catalog.hd_completed)
+
+    def test_ambiguous_hd_provider_result_is_not_automatically_retried(self):
+        class TimingOutReveal:
+            def __init__(self, username, password):
+                pass
+
+            def set_deadline(self, deadline, clock=None):
+                pass
+
+            def request_hd_photos(self, photo_ids):
+                raise RevealError("response lost after submission")
+
+        environment = {
+            **self.environment(),
+            "TACTACAM_USERNAME": "owner@example.com",
+            "TACTACAM_PASSWORD": "secret",
+        }
+        catalog = MemoryCatalog()
+        _, payload = handle_library(
+            environment, catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
+        )
+
+        status, result = handle_review(
+            environment, payload["photos"][0]["review_token"], "request_hd", "",
+            catalog_factory=lambda *_: catalog, reveal_factory=TimingOutReveal,
+            epoch_now=1_786_200_001,
+        )
+
+        self.assertEqual(status, 202)
+        self.assertEqual(result["request_status"], "unknown")
+        self.assertEqual(
+            catalog.hd_unknown,
+            ("33333333-3333-4333-8333-333333333333", "provider_outcome_unknown"),
+        )
+        self.assertIsNone(catalog.hd_failed)
+        self.assertIsNone(catalog.hd_completed)
+
 
 class Gate1ReviewUiTests(unittest.TestCase):
     def test_review_ui_is_model_selected_and_actionable(self):
@@ -182,6 +333,19 @@ class Gate1ReviewUiTests(unittest.TestCase):
         self.assertIn("/api/review", script)
         for action in ("request_hd", "keep_for_identity", "not_useful", "defer"):
             self.assertIn(action, script)
+
+    def test_review_ui_advances_one_card_and_preloads_five_without_full_refresh(self):
+        html = Path("public/index.html").read_text()
+        script = Path("public/app.js").read_text()
+        self.assertIn('id="review-stage"', html)
+        self.assertIn("preloadReviewQueue(5)", script)
+        self.assertIn("review-enter-right", script)
+        self.assertIn("review-exit-left", script)
+        submit_body = script.split("async function submitReview", 1)[1].split("\n}\n", 1)[0]
+        self.assertNotIn("fetchLibrary()", submit_body)
+        self.assertGreater(submit_body.index("refreshReviewBuffer()"), submit_body.index("await fetch('/api/review'"))
+        self.assertIn("pendingReviewIds.size === 0", submit_body)
+        self.assertIn("refreshReviewBuffer", script)
 
     def test_overview_visualizes_the_gate1_narrowing_funnel(self):
         html = Path("public/index.html").read_text()

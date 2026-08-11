@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from reveal_downloader.archive import PhotoArchive, relative_photo_path
+from reveal_downloader.archive import PhotoArchive, _metadata_correlates, relative_photo_path
 
 
 class FakeClient:
@@ -30,6 +30,22 @@ class RepeatingPageClient(FakeClient):
 
 
 class PhotoArchiveTests(unittest.TestCase):
+    def test_hd_upgrade_invalidates_a_completed_thumbnail_archive_unit(self):
+        identity = {
+            "cameraId": "camera-1",
+            "photoId": "photo-1",
+            "photoDateUtc": "2026-08-11T12:00:00Z",
+            "filename": "capture.jpg",
+        }
+        thumbnail = {**identity, "hdPhoto": False}
+        hd = {**identity, "hdPhoto": True}
+        self.assertTrue(_metadata_correlates(thumbnail, thumbnail))
+        self.assertFalse(_metadata_correlates(thumbnail, hd))
+        self.assertTrue(_metadata_correlates(hd, hd))
+        self.assertNotEqual(relative_photo_path(thumbnail), relative_photo_path(hd))
+        self.assertNotIn("_hd.jpg", relative_photo_path(thumbnail).name)
+        self.assertIn("_hd.jpg", relative_photo_path(hd).name)
+
     @staticmethod
     def _photo(**overrides):
         photo = {

@@ -87,6 +87,26 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("cardinality", sql)
         self.assertIn("jsonb_array_length", sql)
 
+    def test_hd_requests_are_provider_submitted_with_fenced_retry_state(self):
+        sql = Path("supabase/migrations/20260811190000_hd_request_pipeline.sql").read_text().lower()
+        for function in (
+            "deerid_begin_hd_request", "deerid_complete_hd_request",
+            "deerid_fail_hd_request", "deerid_mark_hd_request_unknown",
+        ):
+            self.assertIn(f"function public.{function}", sql)
+        self.assertIn("pending_hd", sql)
+        self.assertIn("request_token", sql)
+        self.assertIn("status = 'submitted'", sql)
+        self.assertIn("for update", sql)
+        self.assertIn("stale hd request token", sql)
+        self.assertIn("media_hd_request_available", sql)
+        self.assertIn("status = 'available'", sql)
+        self.assertIn("'pending_hd', coalesce(s.pending_hd, false)", sql)
+        self.assertIn("and not coalesce(s.pending_hd, false)", sql)
+        self.assertIn("provider_outcome_unknown", sql)
+        self.assertNotIn("interval '2 minutes'", sql)
+        self.assertIn("service_role", sql)
+
     def test_gate1_event_membership_is_persisted_before_claiming(self):
         sql = Path("supabase/migrations/20260811165000_gate1_stable_events.sql").read_text().lower()
         self.assertIn("create table deerid.gate1_event_memberships", sql)

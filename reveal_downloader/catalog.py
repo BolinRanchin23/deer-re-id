@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 import uuid
 
 from .archive import detected_image_extension
+from .client import HDRequestRejected, RevealClient, RevealError
 from .supabase import (
     MAX_STORAGE_JSON_BYTES,
     StorageError,
@@ -21,6 +22,7 @@ from .supabase import (
 LIBRARY_DEADLINE_SECONDS = 8.0
 LIBRARY_PREVIEW_SECONDS = 300
 LIBRARY_REVIEW_SECONDS = 900
+HD_REQUEST_DEADLINE_SECONDS = 15.0
 MAX_LIBRARY_PHOTOS = 60
 MAX_LIBRARY_PREVIEW_BYTES = 8 * 1024 * 1024
 GATE1_MODEL_NAME = "SpeciesNet"
@@ -106,6 +108,39 @@ class SupabaseCatalog:
                 "p_review_version": review_version, "p_action": action, "p_note": note or None,
             },
         )
+
+    def begin_hd_request(
+        self, media_id: str, assessment_id: int, review_version: int, note: str
+    ) -> Any:
+        return self._rpc(
+            "deerid_begin_hd_request",
+            {
+                "p_media_id": media_id,
+                "p_assessment_id": assessment_id,
+                "p_review_version": review_version,
+                "p_note": note or None,
+            },
+        )
+
+    def complete_hd_request(self, request_token: str) -> Any:
+        return self._rpc(
+            "deerid_complete_hd_request", {"p_request_token": request_token}
+        )
+
+    def fail_hd_request(self, request_token: str, error_code: str) -> Any:
+        return self._rpc(
+            "deerid_fail_hd_request",
+            {"p_request_token": request_token, "p_error_code": error_code},
+        )
+
+    def mark_hd_request_unknown(self, request_token: str, error_code: str) -> Any:
+        return self._rpc(
+            "deerid_mark_hd_request_unknown",
+            {"p_request_token": request_token, "p_error_code": error_code},
+        )
+
+    def claim_queued_hd_request(self) -> Any:
+        return self._rpc("deerid_claim_queued_hd_request", {})
 
     def read_gate1_pending(self, model_name: str, model_version: str, limit: int = 60) -> Any:
         return self._rpc(
@@ -218,9 +253,10 @@ def handle_review(
     note: str = "",
     *,
     catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    reveal_factory: Callable[[str, str], Any] = RevealClient,
     epoch_now: Optional[int] = None,
 ) -> Tuple[int, Dict[str, Any]]:
-    """Record one bounded human decision for a model-selected photo."""
+    """Record one bounded human decision and submit HD requests to Reveal."""
     if action not in {"request_hd", "keep_for_identity", "not_useful", "defer"}:
         return 400, {"ok": False, "error": "invalid action"}
     if not isinstance(note, str) or len(note) > 500:
@@ -233,9 +269,66 @@ def handle_review(
     if capability is None or not url or not secret:
         return 404, {"ok": False, "error": "not found"}
     media_id, assessment_id, review_version = capability
+    if action == "request_hd" and (
+        not environ.get("TACTACAM_USERNAME") or not environ.get("TACTACAM_PASSWORD")
+    ):
+        return 503, {"ok": False, "error": "HD request unavailable"}
+    clock = time.monotonic
     try:
         catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos"))
-        result = catalog.record_review(media_id, assessment_id, review_version, action, note.strip())
+        deadline = clock() + HD_REQUEST_DEADLINE_SECONDS
+        catalog.set_deadline(deadline, clock=clock)
+        if action == "request_hd":
+            begun = catalog.begin_hd_request(
+                media_id, assessment_id, review_version, note.strip()
+            )
+            if not isinstance(begun, Mapping) or not begun.get("ok"):
+                raise StorageError("HD request could not begin")
+            if not begun.get("should_request"):
+                state = begun.get("status")
+                if state in {"submitted", "available"}:
+                    return 200, {
+                        "ok": True, "media_id": media_id, "action": action,
+                        "request_status": state,
+                    }
+                return 202, {
+                    "ok": True, "media_id": media_id, "action": action,
+                    "request_status": state if state in {"requesting", "unknown"} else "requesting",
+                }
+            request_token = begun.get("request_token")
+            provider_photo_id = begun.get("provider_photo_id")
+            if (
+                not isinstance(request_token, str)
+                or _UUID.fullmatch(request_token) is None
+                or not isinstance(provider_photo_id, str)
+                or not provider_photo_id
+            ):
+                raise StorageError("HD request claim is malformed")
+            client = reveal_factory(
+                environ["TACTACAM_USERNAME"], environ["TACTACAM_PASSWORD"]
+            )
+            client.set_deadline(deadline, clock=clock)
+            try:
+                client.request_hd_photos([provider_photo_id])
+            except HDRequestRejected:
+                catalog.fail_hd_request(request_token, "provider_rejected")
+                return 502, {"ok": False, "error": "HD request failed"}
+            except (RevealError, OSError, RuntimeError, ValueError):
+                catalog.mark_hd_request_unknown(request_token, "provider_outcome_unknown")
+                return 202, {
+                    "ok": True, "media_id": media_id, "action": action,
+                    "request_status": "unknown",
+                }
+            result = catalog.complete_hd_request(request_token)
+            if not isinstance(result, Mapping) or not result.get("ok"):
+                raise StorageError("HD request finalization failed")
+            return 200, {
+                "ok": True, "media_id": media_id, "action": action,
+                "request_status": "submitted",
+            }
+        result = catalog.record_review(
+            media_id, assessment_id, review_version, action, note.strip()
+        )
         if not isinstance(result, Mapping) or not result.get("ok"):
             raise StorageError("Review decision failed")
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
@@ -260,9 +353,16 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
         safe["preview_url"] = f"/api/library_preview?token={_sign_media_token(media_id, now + LIBRARY_PREVIEW_SECONDS, key)}"
         gate1 = safe.get("gate1")
         decision = safe.get("review_decision")
+        if isinstance(gate1, Mapping):
+            pending_hd = gate1.get("pending_hd", False)
+            if not isinstance(pending_hd, bool):
+                raise StorageError("Private library is unavailable")
+        else:
+            pending_hd = False
         if (
             isinstance(gate1, Mapping)
             and gate1.get("route") == "review"
+            and not pending_hd
             and (decision is None or (isinstance(decision, Mapping) and decision.get("action") == "defer"))
         ):
             assessment_id = gate1.get("id")

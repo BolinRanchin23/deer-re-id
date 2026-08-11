@@ -34,6 +34,10 @@ class RevealError(RuntimeError):
     """Base error raised by the Reveal client."""
 
 
+class HDRequestRejected(RevealError):
+    """Reveal explicitly refused an HD request; retry is safe."""
+
+
 class AuthenticationError(RevealError):
     """Authentication failed or requires an unsupported challenge."""
 
@@ -273,6 +277,36 @@ class RevealClient:
             params=params,
         )
         return [_normalize_photo_timestamp(photo) for photo in _response_items(response, "photos")]
+
+    def request_hd_photos(self, photo_ids: List[str]) -> Dict[str, Any]:
+        """Submit Reveal's official HD-photo request for a bounded photo set."""
+        if (
+            not isinstance(photo_ids, list)
+            or not 1 <= len(photo_ids) <= 50
+            or any(
+                not isinstance(photo_id, str)
+                or not photo_id
+                or len(photo_id) > 200
+                or any(character.isspace() or ord(character) < 32 for character in photo_id)
+                for photo_id in photo_ids
+            )
+        ):
+            raise ValueError("invalid Reveal photo IDs")
+        response = self._transport.json_request(
+            "POST",
+            f"{API_BASE_URL}/photos/batchHdPhotoRequest",
+            headers=self._headers(),
+            payload={"photoIds": photo_ids},
+        )
+        envelope = response.get("response") if isinstance(response, dict) else None
+        if not isinstance(envelope, dict):
+            raise RevealError("Reveal HD request returned a malformed response")
+        refused = envelope.get("photosRefused")
+        if type(refused) is not int or refused < 0:
+            raise RevealError("Reveal HD request returned a malformed response")
+        if refused > 0:
+            raise HDRequestRejected("Reveal refused the HD photo request")
+        return {"accepted": len(photo_ids)}
 
     def get_cameras(self) -> List[Dict[str, Any]]:
         response = self._transport.json_request(

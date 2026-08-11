@@ -166,6 +166,44 @@ class RevealClientTests(unittest.TestCase):
         self.assertIs(transport.clock, clock)
         self.assertEqual(len(transport.calls), 2)
 
+    def test_request_hd_photos_uses_official_batch_endpoint(self):
+        class AckTransport(FakeTransport):
+            def json_request(self, method, url, *, headers=None, payload=None, params=None):
+                if "cognito-idp" in url:
+                    return super().json_request(
+                        method, url, headers=headers, payload=payload, params=params
+                    )
+                self.calls.append((method, url, headers, payload, params))
+                return {"response": {"photosRefused": 0}}
+
+        transport = AckTransport()
+        client = RevealClient("person@example.com", "secret", transport=transport)
+
+        result = client.request_hd_photos(["photo-1"])
+
+        self.assertEqual(result["accepted"], 1)
+        api_call = transport.calls[-1]
+        self.assertEqual(api_call[0], "POST")
+        self.assertEqual(api_call[1], "https://api.reveal.ishareit.net/v1/photos/batchHdPhotoRequest")
+        self.assertEqual(api_call[3], {"photoIds": ["photo-1"]})
+        self.assertEqual(api_call[2]["Authorization"], "Bearer access-token")
+
+    def test_request_hd_photos_rejects_provider_refusal(self):
+        class RefusingTransport(FakeTransport):
+            def json_request(self, method, url, *, headers=None, payload=None, params=None):
+                if "cognito-idp" in url:
+                    return super().json_request(method, url, headers=headers, payload=payload, params=params)
+                return {"response": {"photosRefused": 1}}
+
+        client = RevealClient("person@example.com", "secret", transport=RefusingTransport())
+        with self.assertRaisesRegex(RevealError, "refused"):
+            client.request_hd_photos(["photo-1"])
+
+    def test_request_hd_photos_requires_explicit_provider_acknowledgement(self):
+        client = RevealClient("person@example.com", "secret", transport=FakeTransport())
+        with self.assertRaisesRegex(RevealError, "malformed"):
+            client.request_hd_photos(["photo-1"])
+
     def test_get_photos_authenticates_and_sends_access_token(self):
         transport = FakeTransport()
         client = RevealClient("person@example.com", "secret", transport=transport)

@@ -8,6 +8,11 @@ let pipeline = {};
 let mapboxToken = '';
 let cameraMap = null;
 let activeView = 'overview';
+let reviewQueue = [];
+let reviewRefreshInFlight = false;
+const pendingReviewIds = new Set();
+const decidedReviewIds = new Set();
+const deferredReviewIds = new Set();
 
 function photoLabels(item) {
   return Array.isArray(item.labels) ? item.labels.filter(label => label && typeof label === 'object') : [];
@@ -24,8 +29,14 @@ function needsReview(item) {
 }
 
 async function submitReview(item, action, card) {
-  const buttons = card.querySelectorAll('button');
-  buttons.forEach(button => { button.disabled = true; });
+  if (pendingReviewIds.has(item.id)) return;
+  pendingReviewIds.add(item.id);
+  reviewQueue = reviewQueue.filter(candidate => candidate.id !== item.id);
+  const resolves = action !== 'defer';
+  if (resolves) pipeline.unresolved_review = Math.max(0, n(pipeline.unresolved_review) - 1);
+  card.classList.add('review-exit-left');
+  setTimeout(() => renderReview(true), 120);
+  preloadReviewQueue(5);
   try {
     const response = await fetch('/api/review', {
       method: 'POST',
@@ -33,11 +44,24 @@ async function submitReview(item, action, card) {
       body: JSON.stringify({token: item.review_token, action})
     });
     const data = await response.json().catch(() => ({ok: false}));
-    if (!response.ok || !data.ok) throw new Error('The review decision could not be saved.');
-    await fetchLibrary();
+    if (!response.ok || !data.ok) throw new Error(
+      action === 'request_hd' ? 'Reveal did not accept the HD request. The photo was returned to the queue.' : 'The review decision could not be saved.'
+    );
+    pendingReviewIds.delete(item.id);
+    if (resolves) decidedReviewIds.add(item.id);
+    else deferredReviewIds.add(item.id);
+    updateReviewCounts();
+    // Refill only after all concurrent decisions have committed so an older
+    // server snapshot cannot overwrite the optimistic unresolved count.
+    if (reviewQueue.length < 10 && pendingReviewIds.size === 0) refreshReviewBuffer();
   } catch (error) {
-    buttons.forEach(button => { button.disabled = false; });
+    pendingReviewIds.delete(item.id);
+    reviewQueue.push(item);
+    if (resolves) pipeline.unresolved_review = n(pipeline.unresolved_review) + 1;
     showError(error.message || 'The review decision could not be saved.');
+    updateReviewCounts();
+    if (!reviewQueue.some(candidate => candidate.id !== item.id)) renderReview(true);
+    if (reviewQueue.length < 10 && pendingReviewIds.size === 0) refreshReviewBuffer();
   }
 }
 
@@ -91,7 +115,8 @@ function makePhotoCard(item, options = {}) {
   const image = document.createElement('img');
   image.src = item.preview_url;
   image.alt = 'Archived Reveal camera capture';
-  image.loading = 'lazy';
+  image.loading = options.review ? 'eager' : 'lazy';
+  image.decoding = 'async';
   image.referrerPolicy = 'no-referrer';
   const meta = document.createElement('div');
   meta.className = 'photo-meta';
@@ -183,17 +208,79 @@ function renderFilteredPhotos() {
   renderPhotoGrid($('library-view'), filtered);
 }
 
-function renderReview() {
-  const queue = photos.filter(needsReview);
-  const unresolved = n(pipeline.unresolved_review) || queue.length;
-  $('review-summary').textContent = queue.length < unresolved
-    ? `Showing ${queue.length} of ${unresolved} awaiting a human decision`
-    : `${unresolved} awaiting a human decision`;
-  renderPhotoGrid($('review-grid'), queue, {
-    review: true,
-    emptyTitle: 'Review queue is clear',
-    emptyCopy: 'Gate 1 has no unresolved model-selected photos.'
+function updateReviewCounts() {
+  const unresolved = n(pipeline.unresolved_review) || reviewQueue.length;
+  $('review-count').textContent = unresolved;
+  $('review-nav-count').textContent = unresolved;
+  $('review-summary').textContent = unresolved
+    ? `${unresolved} awaiting a decision · ${Math.min(5, Math.max(0, reviewQueue.length - 1))} next photos ready`
+    : 'Review queue complete';
+}
+
+function preloadReviewQueue(count) {
+  reviewQueue.slice(1, count + 1).forEach(item => {
+    const image = new Image();
+    image.decoding = 'async';
+    image.referrerPolicy = 'no-referrer';
+    image.src = item.preview_url;
   });
+}
+
+function renderReview(animate = false) {
+  const stage = $('review-stage');
+  stage.replaceChildren();
+  updateReviewCounts();
+  const item = reviewQueue[0];
+  if (!item) {
+    const empty = document.createElement('div');
+    empty.className = 'card empty';
+    const inner = document.createElement('div');
+    inner.className = 'empty-inner';
+    const title = document.createElement('strong');
+    title.textContent = 'Review queue is clear';
+    const copy = document.createElement('span');
+    copy.textContent = 'Gate 1 has no unresolved model-selected photos in the ready buffer.';
+    inner.append(title, copy);
+    empty.appendChild(inner);
+    stage.appendChild(empty);
+    return;
+  }
+  const card = makePhotoCard(item, {review: true});
+  card.classList.add('review-focus-card');
+  if (animate) card.classList.add('review-enter-right');
+  stage.appendChild(card);
+  preloadReviewQueue(5);
+}
+
+function mergeReviewQueue(incoming, preserveCurrent) {
+  const available = incoming.filter(item =>
+    !decidedReviewIds.has(item.id) && !pendingReviewIds.has(item.id) && !deferredReviewIds.has(item.id)
+  );
+  if (!preserveCurrent) {
+    reviewQueue = available;
+    return;
+  }
+  const fresh = new Map(available.map(item => [item.id, item]));
+  const merged = reviewQueue
+    .filter(item => fresh.has(item.id) && !pendingReviewIds.has(item.id))
+    .map(item => fresh.get(item.id));
+  const seen = new Set(merged.map(item => item.id));
+  available.forEach(item => { if (!seen.has(item.id)) merged.push(item); });
+  reviewQueue = merged;
+}
+
+async function refreshReviewBuffer() {
+  if (reviewRefreshInFlight) return;
+  reviewRefreshInFlight = true;
+  try {
+    await fetchLibrary({preserveReview: true, renderReviewView: false});
+    if (!reviewQueue.length) renderReview(true);
+    else preloadReviewQueue(5);
+  } catch (_) {
+    // Keep the already-loaded review buffer usable during a background refresh failure.
+  } finally {
+    reviewRefreshInFlight = false;
+  }
 }
 
 function renderPipeline() {
@@ -344,7 +431,7 @@ function showView(name) {
   window.scrollTo({top: 0, behavior: 'instant'});
 }
 
-function updateCatalogViews() {
+function updateCatalogViews(renderReviewView = true) {
   const review = photos.filter(needsReview);
   const profiles = collectProfiles();
   const total = n(pipeline.total_thumbnails) || photos.length;
@@ -360,13 +447,14 @@ function updateCatalogViews() {
   renderPhotoGrid($('recent-photos'), photos.slice(0, 8), {emptyTitle: 'No cataloged photos yet'});
   populateCameraFilter();
   renderFilteredPhotos();
-  renderReview();
+  if (renderReviewView) renderReview();
+  else updateReviewCounts();
   renderDeerProfiles();
   renderCameraCards();
   if (activeView === 'cameras') loadCameraMap();
 }
 
-async function fetchLibrary() {
+async function fetchLibrary(options = {}) {
   const response = await fetch('/api/library', {cache: 'no-store'});
   const data = await response.json().catch(() => ({ok: false}));
   if (!response.ok || !data.ok) throw new Error('The photo catalog is temporarily unavailable.');
@@ -374,7 +462,8 @@ async function fetchLibrary() {
   cameras = Array.isArray(data.cameras) ? data.cameras : [];
   pipeline = data.pipeline && typeof data.pipeline === 'object' ? data.pipeline : {};
   mapboxToken = typeof data.mapbox_access_token === 'string' ? data.mapbox_access_token : '';
-  updateCatalogViews();
+  mergeReviewQueue(photos.filter(needsReview), Boolean(options.preserveReview));
+  updateCatalogViews(options.renderReviewView !== false);
 }
 
 async function refreshStatus() {

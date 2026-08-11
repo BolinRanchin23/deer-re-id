@@ -127,13 +127,21 @@
     .empty { min-height: 210px; display: grid; place-items: center; padding: 32px; text-align: center; color: var(--muted); }
     .empty-inner { max-width: 430px; }
     .empty strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 16px; font-weight: 580; }
-    .review-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-    .review-card .photo-meta { display: grid; gap: 9px; }
-    .gate1-evidence { color: var(--muted); font-size: 11px; }
-    .review-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
-    .review-actions button { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: var(--panel-2); cursor: pointer; font-size: 11px; }
-    .review-actions button:hover { color: var(--ink); border-color: var(--line-strong); }
+    .review-stage { position: relative; width: min(920px, 100%); margin: 0 auto; overflow: hidden; min-height: 620px; }
+    .review-focus-card { overflow: hidden; cursor: default; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .7fr); min-height: 600px; box-shadow: 0 24px 70px rgba(0,0,0,.28); }
+    .review-focus-card:hover { transform: none; }
+    .review-focus-card > img { width: 100%; height: 100%; min-height: 600px; aspect-ratio: auto; object-fit: contain; background: #090a09; }
+    .review-focus-card .photo-meta { padding: 24px; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; border-left: 1px solid var(--line); }
+    .review-focus-card .photo-meta strong { font-size: 18px; }
+    .gate1-evidence { color: var(--muted); font-size: 12px; }
+    .review-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .review-actions button { min-height: 52px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: var(--panel-2); cursor: pointer; font-size: 12px; }
+    .review-actions button:hover { color: var(--ink); border-color: var(--moss); background: var(--moss-wash); }
     .review-actions button:disabled { cursor: wait; opacity: .45; }
+    .review-enter-right { animation: review-enter-right .24s cubic-bezier(.22,.8,.3,1); }
+    .review-exit-left { animation: review-exit-left .14s ease-in forwards; pointer-events: none; }
+    @keyframes review-enter-right { from { opacity: .3; transform: translateX(80px); } to { opacity: 1; transform: none; } }
+    @keyframes review-exit-left { to { opacity: 0; transform: translateX(-80px); } }
     .deer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .deer-card { overflow: hidden; }
     .deer-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
@@ -163,7 +171,7 @@
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
     @media (max-width: 1050px) {
       .photo-grid { grid-template-columns: repeat(3, 1fr); }
-      .review-grid, .deer-grid { grid-template-columns: repeat(2, 1fr); }
+      .deer-grid { grid-template-columns: repeat(2, 1fr); }
       .camera-list { grid-template-columns: repeat(2, 1fr); }
     }
     @media (max-width: 780px) {
@@ -180,7 +188,11 @@
       .funnel-arrow { transform: rotate(90deg); justify-self: center; }
       .funnel-outcomes { grid-template-columns: 1fr; }
       .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-      .review-grid, .deer-grid { grid-template-columns: 1fr; }
+      .deer-grid { grid-template-columns: 1fr; }
+      .review-stage { min-height: 0; }
+      .review-focus-card { grid-template-columns: 1fr; min-height: 0; }
+      .review-focus-card > img { min-height: 0; height: auto; max-height: 58vh; aspect-ratio: 4/3; }
+      .review-focus-card .photo-meta { padding: 16px; border-left: 0; border-top: 1px solid var(--line); }
       .camera-list { grid-template-columns: repeat(2, 1fr); }
       .map, .map-placeholder { min-height: 60vh; }
       .integrity { grid-template-columns: 1fr; }
@@ -264,7 +276,7 @@
 
       <section id="view-review" class="view" data-view-panel="review" hidden>
         <div class="view-head"><div><p class="eyebrow">Human review</p><h1>Worth a closer look?</h1><p class="view-copy">Triage low-cost cloud thumbnails before requesting HD media or assigning an identity.</p></div><div id="review-summary" class="updated">Loading queue…</div></div>
-        <div id="review-grid" class="review-grid"></div>
+        <div id="review-stage" class="review-stage" aria-live="polite"></div>
       </section>
 
       <section id="view-deer" class="view" data-view-panel="deer" hidden>
@@ -294,6 +306,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=5" defer></script>
+  <script src="/app.js?v=6" defer></script>
 </body>
 </html>

@@ -232,12 +232,14 @@ def _is_complete(
 
 
 def _metadata_correlates(stored: Dict[str, Any], current: Dict[str, Any]) -> bool:
-    """Correlate immutable identity while allowing provider URLs/status to rotate."""
-    return all(
+    """Correlate identity, but force a fresh download when Reveal upgrades to HD."""
+    identity_matches = all(
         isinstance(stored.get(field), str)
         and stored.get(field) == current.get(field)
         for field in ("cameraId", "photoId", "photoDateUtc")
     )
+    hd_upgrade_pending = current.get("hdPhoto") is True and stored.get("hdPhoto") is not True
+    return identity_matches and not hd_upgrade_pending
 
 
 def detected_image_extension(body: bytes) -> str:
@@ -262,12 +264,13 @@ def relative_photo_path(photo: Dict[str, Any]) -> Path:
     photo_id = _safe_component(photo_value)
     extension = _extension(photo)
     timestamp = captured.strftime("%Y%m%dT%H%M%SZ")
+    variant_suffix = "_hd" if photo.get("hdPhoto") is True else ""
     return (
         Path(camera_id)
         / captured.strftime("%Y")
         / captured.strftime("%m")
         / captured.strftime("%d")
-        / f"{timestamp}_{photo_id}{extension}"
+        / f"{timestamp}_{photo_id}{variant_suffix}{extension}"
     )
 
 

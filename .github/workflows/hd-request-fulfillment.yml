@@ -1,0 +1,45 @@
+name: HD Request Queue Fulfillment
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Maximum queued HD requests to submit
+        required: false
+        default: "20"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deerid-hd-request-fulfillment
+  cancel-in-progress: false
+
+jobs:
+  fulfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install DeerID runtime
+        run: python -m pip install .
+      - name: Submit queued requests to Reveal
+        env:
+          TACTACAM_USERNAME: ${{ secrets.TACTACAM_USERNAME }}
+          TACTACAM_PASSWORD: ${{ secrets.TACTACAM_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_BUCKET: tactacam-photos
+          HD_REQUEST_BATCH: ${{ inputs.limit || '20' }}
+        run: |
+          test -n "$TACTACAM_USERNAME"
+          test -n "$TACTACAM_PASSWORD"
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SECRET_KEY"
+          python -m reveal_downloader.hd_request_worker
