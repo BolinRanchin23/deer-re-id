@@ -287,6 +287,13 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("human_antler = 'yes' or human_male = 'yes'", sql)
         self.assertNotIn("human_head = 'full' then 'female_candidate'", sql)
 
+    def test_hd_priority_is_pinned_to_the_validated_model_version(self):
+        sql = Path(
+            "supabase/migrations/20260811231000_gate1b_pinned_hd_priority.sql"
+        ).read_text().lower()
+        self.assertIn("gp.model_name = policy.model_name", sql)
+        self.assertIn("gp.model_version = policy.model_version", sql)
+
 
 if __name__ == "__main__":
     unittest.main()
