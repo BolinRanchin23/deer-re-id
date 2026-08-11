@@ -226,8 +226,17 @@ def _is_complete(
         return False
     return (
         isinstance(metadata, dict)
-        and metadata == photo
+        and _metadata_correlates(metadata, photo)
         and hmac.compare_digest(expected, actual)
+    )
+
+
+def _metadata_correlates(stored: Dict[str, Any], current: Dict[str, Any]) -> bool:
+    """Correlate immutable identity while allowing provider URLs/status to rotate."""
+    return all(
+        isinstance(stored.get(field), str)
+        and stored.get(field) == current.get(field)
+        for field in ("cameraId", "photoId", "photoDateUtc")
     )
 
 

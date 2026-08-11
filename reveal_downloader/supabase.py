@@ -12,7 +12,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .archive import SyncResult, detected_image_extension, relative_photo_path
+from .archive import (
+    SyncResult,
+    _metadata_correlates,
+    detected_image_extension,
+    relative_photo_path,
+)
 
 DEFAULT_STORAGE_TIMEOUT = 8.0
 MIN_REQUEST_BUDGET = 0.1
@@ -712,7 +717,7 @@ def _cloud_entry_complete(
     actual = hashlib.sha256(image).hexdigest()
     return (
         isinstance(stored_metadata, dict)
-        and stored_metadata == photo
+        and _metadata_correlates(stored_metadata, photo)
         and hmac.compare_digest(expected, actual)
     )
 

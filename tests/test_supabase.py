@@ -465,6 +465,24 @@ class SupabaseArchiveTests(unittest.TestCase):
         self.assertEqual(result.downloaded, 0)
         self.assertEqual(client.download_calls, [])
 
+    def test_sync_skips_verified_cloud_unit_when_only_signed_url_changes(self):
+        _, _, objects = self._valid_objects()
+        transport = FakeStorageTransport(objects)
+        archive = SupabaseArchive(
+            "https://project.supabase.co",
+            "test-key",
+            "tactacam-photos",
+            transport=transport,
+        )
+        client = FakeRevealClient()
+        client.photo = {**client.photo, "photoUrl": "https://media.example/new-signature.jpg"}
+
+        result = archive.sync(client)
+
+        self.assertEqual(result.skipped, 1)
+        self.assertEqual(result.downloaded, 0)
+        self.assertEqual(client.download_calls, [])
+
     def test_sync_repairs_cloud_entry_when_only_checksum_marker_exists(self):
         _, image_key, objects = self._valid_objects()
         marker = image_key.rsplit(".", 1)[0] + ".sha256"
