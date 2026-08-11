@@ -9,7 +9,15 @@
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     },
-    "api/preview.py": {
+    "api/library.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/library_preview.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/auth.py": {
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     }
@@ -20,7 +28,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+          "value": "default-src 'self'; connect-src 'self' https://api.mapbox.com; img-src 'self' data: https://api.mapbox.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'"
         },
         {"key": "Referrer-Policy", "value": "no-referrer"},
         {"key": "X-Content-Type-Options", "value": "nosniff"},

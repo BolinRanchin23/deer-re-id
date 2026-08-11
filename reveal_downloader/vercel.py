@@ -56,6 +56,11 @@ def handle_sync(
             environ["SUPABASE_SECRET_KEY"],
             environ.get("SUPABASE_BUCKET", "tactacam-photos"),
         )
+        configure_catalog = getattr(archive, "set_catalog_enabled", None)
+        if callable(configure_catalog):
+            configure_catalog(
+                environ.get("SUPABASE_CATALOG_ENABLED", "").strip().lower() == "true"
+            )
         result = archive.sync(
             client,
             page_size=page_size,

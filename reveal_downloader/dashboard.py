@@ -147,12 +147,6 @@ def handle_status(
         "latest": latest,
         "recent_runs": runs,
     }
-    signing_key = _preview_signing_key(environ)
-    if environ.get("PREVIEWS_ENABLED", "").lower() == "true" and signing_key:
-        payload["previews_enabled"] = True
-        payload["previews"] = _preview_descriptors(
-            raw_runs, signing_key, int(time.time()) if epoch_now is None else int(epoch_now)
-        )
     return 200, payload
 
 

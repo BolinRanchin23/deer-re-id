@@ -35,6 +35,37 @@ class FakeArchive:
 
 
 class VercelSyncTests(unittest.TestCase):
+    def test_catalog_is_enabled_only_by_explicit_environment_flag(self):
+        class CatalogArchive(FakeArchive):
+            catalog_enabled = None
+
+            def set_catalog_enabled(self, enabled):
+                type(self).catalog_enabled = enabled
+
+        base = {
+            "CRON_SECRET": "cron-secret-at-least-16",
+            "TACTACAM_USERNAME": "person@example.com",
+            "TACTACAM_PASSWORD": "tactacam-secret",
+            "SUPABASE_URL": "https://project.supabase.co",
+            "SUPABASE_SECRET_KEY": "supabase-secret",
+        }
+        for configured, expected in ((None, False), ("false", False), ("true", True)):
+            with self.subTest(configured=configured):
+                environ = dict(base)
+                if configured is not None:
+                    environ["SUPABASE_CATALOG_ENABLED"] = configured
+                CatalogArchive.catalog_enabled = None
+
+                status, _ = handle_sync(
+                    environ,
+                    "Bearer cron-secret-at-least-16",
+                    client_factory=FakeClient,
+                    archive_factory=CatalogArchive,
+                )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(CatalogArchive.catalog_enabled, expected)
+
     def test_degraded_sync_reports_safe_photo_failure_categories(self):
         class DegradedArchive(FakeArchive):
             failure_stages = {"image_host": 2}

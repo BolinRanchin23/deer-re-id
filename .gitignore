@@ -2,6 +2,8 @@
 *.har
 .claude/
 .vercel/
+.python-version
+uv.lock
 
 # Python
 __pycache__/
@@ -14,6 +16,9 @@ dist/
 # Credentials
 .env
 .env.*
+
+# Supabase CLI local linkage/cache
+supabase/.temp/
 
 # Downloaded camera data
 reveal-archive/

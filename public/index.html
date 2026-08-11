@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>DeerID Operations</title>
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
   <style>
     :root {
       --bg: #0f1110;
@@ -87,6 +88,35 @@
     .empty strong { display: block; margin-bottom: 5px; color: #d3d8d4; font-weight: 500; }
     .privacy { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
     .privacy svg { width: 14px; height: 14px; }
+    .private-panel { padding: 22px; }
+    .unlock { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+    .unlock label { min-width: 220px; flex: 1; display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+    .unlock input { width: 100%; min-height: 44px; padding: 11px 13px; border: 1px solid var(--border-strong); border-radius: 9px; color: var(--text); background: #0f1110; font: inherit; }
+    .unlock input:focus { outline: 2px solid rgba(62,207,142,.45); outline-offset: 1px; }
+    button { min-height: 44px; padding: 11px 15px; border: 1px solid rgba(62,207,142,.35); border-radius: 9px; color: #07130e; background: var(--green); font: 600 13px/1 inherit; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .auth-form[hidden] { display: none; }
+    button.secondary { color: var(--muted); border-color: var(--border-strong); background: transparent; }
+    .library-shell[hidden] { display: none; }
+    .library-nav { display: flex; gap: 8px; margin-bottom: 16px; }
+    .library-nav button { color: var(--muted); border-color: var(--border); background: var(--surface-2); }
+    .library-nav button.active { color: #07130e; border-color: var(--green); background: var(--green); }
+    .map { min-height: 440px; overflow: hidden; border-radius: var(--radius); background: linear-gradient(135deg,#18241d,#101411); }
+    .map-placeholder { min-height: 440px; display: grid; place-items: center; padding: 30px; text-align: center; color: var(--muted); }
+    .leaflet-container { font-family: inherit; background: #101411; }
+    .leaflet-popup-content-wrapper, .leaflet-popup-tip { color: var(--text); background: var(--surface-2); }
+    .leaflet-popup-content { margin: 12px 14px; }
+    .leaflet-control-attribution { font-size: 10px; }
+    .camera-list { grid-template-columns: repeat(4, 1fr); margin-top: 14px; }
+    .camera-card { padding: 16px; }
+    .camera-card strong { display: block; font-weight: 500; }
+    .camera-card span { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+    .library-photos { grid-template-columns: repeat(4, 1fr); }
+    .library-photo { overflow: hidden; }
+    .library-photo img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+    .library-photo-meta { padding: 12px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .chip { padding: 3px 7px; border: 1px solid var(--border-strong); border-radius: 99px; color: #bdc5bf; font-size: 10px; }
     .error-banner { display: none; margin-top: 28px; padding: 13px 16px; border: 1px solid rgba(238,119,119,.28); border-radius: 10px; color: #f1b0b0; background: rgba(238,119,119,.08); }
     footer { padding: 22px 0 40px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
     @media (max-width: 780px) {
@@ -95,12 +125,16 @@
       .metrics { grid-template-columns: repeat(2, 1fr); }
       .integrity { grid-template-columns: 1fr; }
       .photos { grid-template-columns: repeat(2, 1fr); }
+      .library-photos, .camera-list { grid-template-columns: repeat(2, 1fr); }
       .table-card { overflow-x: auto; }
       table { min-width: 630px; }
     }
     @media (max-width: 440px) {
       .metrics { grid-template-columns: 1fr; }
       .nav-meta span:last-child { display: none; }
+      .unlock, .unlock label, .unlock button { width: 100%; }
+      .library-nav { position: sticky; top: 74px; z-index: 5; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: rgba(15,17,16,.92); }
+      .map, .map-placeholder { min-height: 58vh; }
     }
   </style>
 </head>
@@ -142,59 +176,38 @@
       <div class="card table-card"><table><thead><tr><th>Completed</th><th>Status</th><th>Downloaded</th><th>Verified</th><th>Failed</th></tr></thead><tbody id="runs"><tr><td colspan="5" class="empty">Loading run history…</td></tr></tbody></table></div>
     </section>
 
-    <section class="section">
-      <div class="section-head"><div><h2>Recent photos</h2><p class="section-copy">Photo previews are temporarily enabled through expiring private-storage proxy links.</p></div><div class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span>Temporary access</span></div></div>
-      <div id="preview-grid" class="grid photos"><div class="card empty" style="grid-column:1/-1"><strong>Loading previews</strong>Requesting short-lived image links.</div></div>
+    <section class="section" id="private-library">
+      <div class="section-head"><div><h2>Private photo library</h2><p class="section-copy">Browse verified photos, camera health, and exact deployment locations with your DeerID account.</p></div><div class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span>Exact locations protected</span></div></div>
+      <div id="library-lock" class="card private-panel">
+        <form id="library-auth" class="unlock auth-form">
+          <label>Email<input id="library-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" required></label>
+          <label>Password<input id="library-password" type="password" autocomplete="current-password" placeholder="At least 8 characters" minlength="8" required></label>
+          <button type="submit">Sign in</button>
+          <button id="recover-password" type="button" class="secondary">Forgot password?</button>
+        </form>
+        <form id="password-setup" class="unlock auth-form" hidden>
+          <label>New password<input id="new-password" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters" required></label>
+          <button type="submit">Set password</button>
+        </form>
+        <p id="library-message" class="section-copy" role="status">Sign in to view private photos and exact camera locations. Your session is stored only in secure HttpOnly cookies.</p>
+      </div>
+      <div id="library-shell" class="library-shell" hidden>
+        <div class="library-nav" aria-label="Private library views">
+          <button id="show-library" class="active" type="button">Photos</button>
+          <button id="show-map" type="button">Camera map</button>
+          <button id="lock-library" class="secondary" type="button">Sign out</button>
+        </div>
+        <div id="library-view"><div class="card empty"><strong>Loading photo catalog</strong>Reading verified media metadata.</div></div>
+        <div id="map-view" hidden>
+          <div class="section-head"><div><h2>Camera map</h2><p class="section-copy">Satellite view with the latest provider-reported camera locations.</p></div><span class="chip">Satellite</span></div>
+          <div id="camera-map" class="card map"><div class="map-placeholder"><div><strong>Loading map</strong><br>Exact coordinates are available only after authorization.</div></div></div>
+          <div id="camera-list" class="grid camera-list"></div>
+        </div>
+      </div>
     </section>
   </main>
   <footer><div class="shell">DeerID · Private archive telemetry · Refreshes every 30 seconds</div></footer>
-  <script>
-    const $ = id => document.getElementById(id);
-    const n = value => Number.isInteger(value) && value >= 0 ? value : 0;
-    const date = value => value ? new Date(value).toLocaleString([], {dateStyle:'medium', timeStyle:'short'}) : 'Not available';
-    function setHealth(value) {
-      const known = ['healthy','degraded','error'];
-      const health = known.includes(value) ? value : 'unknown';
-      $('health').textContent = health[0].toUpperCase() + health.slice(1);
-      $('nav-status').textContent = health === 'healthy' ? 'All systems reporting' : health === 'unknown' ? 'No completed runs' : 'Attention required';
-      $('nav-dot').className = 'pulse ' + health;
-      $('health-detail').textContent = health === 'healthy' ? 'Latest run completed' : health === 'unknown' ? 'Waiting for first run' : 'Review recent runs';
-    }
-    function renderRuns(runs) {
-      const body = $('runs'); body.replaceChildren();
-      if (!runs.length) { const row=body.insertRow(); const cell=row.insertCell(); cell.colSpan=5; cell.className='empty'; cell.textContent='No synchronization runs have been recorded yet.'; return; }
-      runs.forEach(run => {
-        const row=body.insertRow();
-        const verified=run.verified || {};
-        const verifiedUnits=Math.min(n(verified.image),n(verified.metadata),n(verified.checksum));
-        const values=[date(run.finished_at), run.status || 'unknown', n(run.downloaded), verifiedUnits, n(run.failed)];
-        values.forEach((value,index)=>{ const cell=row.insertCell(); if(index===1){ const pill=document.createElement('span'); pill.className='status-pill '+value; pill.textContent=value; cell.appendChild(pill); } else cell.textContent=value; });
-      });
-    }
-
-    function renderPreviews(previews) {
-      const grid=$('preview-grid'); grid.replaceChildren();
-      const safe=previews.filter(item => item && typeof item.url==='string' && /^\/api\/preview\?token=[0-9a-f.]+$/.test(item.url)).slice(0,5);
-      if(!safe.length){ const empty=document.createElement('div'); empty.className='card empty'; empty.style.gridColumn='1/-1'; const strong=document.createElement('strong'); strong.textContent='No previews available'; empty.append(strong,'Run a successful synchronization to generate temporary previews.'); grid.appendChild(empty); return; }
-      safe.forEach(item=>{ const card=document.createElement('article'); card.className='card photo'; const image=document.createElement('img'); image.src=item.url; image.alt='Recent private Reveal photo'; image.loading='lazy'; image.referrerPolicy='no-referrer'; card.appendChild(image); if(item.captured_at){ const captured=document.createElement('time'); captured.dateTime=item.captured_at; captured.textContent=date(item.captured_at); card.appendChild(captured); } grid.appendChild(card); });
-    }
-
-    async function refresh() {
-      try {
-        const response=await fetch('/api/status',{cache:'no-store'}); const data=await response.json();
-        if(!response.ok || !data.ok) throw new Error('Status service unavailable');
-        $('error').style.display='none'; setHealth(data.health);
-        $('updated').textContent='Last durable update · '+date(data.updated_at);
-        const latest=data.latest || {}; $('downloaded').textContent=n(latest.downloaded); $('skipped').textContent=n(latest.skipped); $('failed').textContent=n(latest.failed);
-        const verified=latest.verified || {}; $('images').textContent=n(verified.image); $('metadata').textContent=n(verified.metadata); $('checksums').textContent=n(verified.checksum);
-        [['image-check',verified.image],['metadata-check',verified.metadata],['checksum-check',verified.checksum]].forEach(([id,count])=>{ const mark=$(id); const complete=n(count)>0; mark.className='check'+(complete?' verified':''); mark.textContent=complete?'✓':'·'; });
-        renderRuns(Array.isArray(data.recent_runs)?data.recent_runs:[]);
-        renderPreviews(data.previews_enabled && Array.isArray(data.previews)?data.previews:[]);
-      } catch (_) {
-        setHealth('error'); $('updated').textContent='Durable status is temporarily unavailable'; $('error').textContent='The dashboard could not read its private status manifest. Synchronization remains fail-closed.'; $('error').style.display='block';
-      }
-    }
-    refresh(); setInterval(refresh,30000);
-  </script>
+  <script src="/vendor/leaflet/leaflet.js" defer></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>

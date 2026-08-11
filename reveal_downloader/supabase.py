@@ -1,6 +1,7 @@
 """Supabase Storage archive used by the Vercel cron function."""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
@@ -18,7 +19,32 @@ MIN_REQUEST_BUDGET = 0.1
 MAX_STORAGE_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_STORAGE_JSON_BYTES = 64 * 1024
 MAX_STATUS_RECORD_BYTES = 64 * 1024
+MAX_CATALOG_REQUEST_BYTES = 2 * 1024 * 1024
+_PRIVATE_PROVIDER_KEYS = frozenset(
+    {
+        "accesstoken",
+        "address",
+        "apnstokens",
+        "email",
+        "fcmtokens",
+        "iccid",
+        "password",
+        "paymentmethodid",
+        "phone",
+        "refreshtoken",
+        "simiccid",
+        "stripecustomerid",
+    }
+)
 _STATUS_OBJECT_NAME = re.compile(r"\A\d{8}T\d{6}Z-[0-9a-f]{32}\.json\Z")
+
+
+def _postgrest_auth_headers(api_key: str) -> Dict[str, str]:
+    """Modern Supabase keys are API keys, not bearer JWTs."""
+    headers = {"apikey": api_key}
+    if not api_key.startswith(("sb_secret_", "sb_publishable_")):
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 class StorageError(RuntimeError):
@@ -121,6 +147,11 @@ class SupabaseArchive:
         self.progress_failed = 0
         self.failure_stages: Dict[str, int] = {}
         self.failure_hosts: Dict[str, int] = {}
+        self._catalog_enabled = False
+
+    def set_catalog_enabled(self, enabled: bool) -> None:
+        """Opt into the relational catalog after its migration has been applied."""
+        self._catalog_enabled = bool(enabled)
 
     def set_deadline(
         self,
@@ -160,6 +191,7 @@ class SupabaseArchive:
         self.progress_failed = 0
         self.failure_stages = {}
         self.failure_hosts = {}
+        catalog_items = []
         page = 0
         seen_pages = set()
         while max_pages <= 0 or page < max_pages:
@@ -192,6 +224,9 @@ class SupabaseArchive:
                         ):
                             self.progress_skipped += 1
                             self._remember_unit(image_path, photo)
+                            catalog_items.append(
+                                _catalog_item(photo, image_path, image_body, marker)
+                            )
                             continue
                         check_deadline()
                         # Invalidate the commit record before any repair can fail.
@@ -225,6 +260,9 @@ class SupabaseArchive:
                         raise ValueError("uploaded archive unit failed read-back verification")
                     self.progress_downloaded += 1
                     self._remember_unit(image_path, photo)
+                    catalog_items.append(
+                        _catalog_item(photo, image_path, stored_image, stored_marker)
+                    )
                 except StorageError:
                     self.progress_failed += 1
                     raise
@@ -244,6 +282,24 @@ class SupabaseArchive:
             if len(photos) < page_size:
                 break
             page += 1
+        if self._catalog_enabled:
+            cameras = []
+            try:
+                check_deadline()
+                cameras = client.get_cameras()
+            except Exception:  # Catalog is auxiliary; never mask verified archive success.
+                self.progress_failed += 1
+                self.failure_stages["catalog_cameras"] = (
+                    self.failure_stages.get("catalog_cameras", 0) + 1
+                )
+            try:
+                check_deadline()
+                self._write_catalog(cameras, catalog_items)
+            except Exception:  # Catalog is auxiliary; never mask verified archive success.
+                self.progress_failed += 1
+                self.failure_stages["catalog_index"] = (
+                    self.failure_stages.get("catalog_index", 0) + 1
+                )
         return SyncResult(
             downloaded=self.progress_downloaded,
             skipped=self.progress_skipped,
@@ -333,6 +389,47 @@ class SupabaseArchive:
         self._upload(
             f"_status/runs/{name}", body, "application/json", upsert=False
         )
+
+    def _write_catalog(self, cameras: Any, media: Any) -> None:
+        """Atomically index verified archive units through the private RPC."""
+        observed_at = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        safe_cameras = [
+            _sanitize_provider_payload(camera)
+            for camera in cameras
+            if isinstance(camera, dict)
+        ]
+        body = json.dumps(
+            {
+                "p_cameras": safe_cameras,
+                "p_media": media,
+                "p_observed_at": observed_at,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(body) > MAX_CATALOG_REQUEST_BYTES:
+            raise StorageError("Supabase catalog request exceeds size limit")
+        response = self._transport.request(
+            "POST",
+            f"{self.base_url}/rest/v1/rpc/deerid_ingest_reveal_batch",
+            headers={
+                **_postgrest_auth_headers(self._headers["apikey"]),
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+            body=body,
+            max_response_bytes=MAX_STORAGE_JSON_BYTES,
+        )
+        if response.status not in {200, 204}:
+            raise StorageError(
+                f"Supabase catalog write failed with HTTP {response.status}",
+                http_status=response.status,
+                provider_code=_safe_provider_code(response),
+            )
 
 
     def _ensure_bucket(self) -> None:
@@ -466,6 +563,97 @@ def _safe_provider_code(response: StorageResponse) -> Optional[str]:
         candidate = str(payload.get(field, "")).strip().replace(" ", "_")
         if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", candidate):
             return candidate
+    return None
+
+
+def _catalog_item(
+    photo: Dict[str, Any],
+    object_path: str,
+    image: Optional[bytes],
+    marker: Optional[bytes],
+) -> Dict[str, Any]:
+    """Build a bounded catalog record only from a verified archive unit."""
+    if image is None or marker is None:
+        raise ValueError("verified catalog item is incomplete")
+    digest = hashlib.sha256(image).hexdigest()
+    try:
+        marker_digest = marker.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise ValueError("verified catalog checksum is invalid") from exc
+    if not hmac.compare_digest(digest, marker_digest):
+        raise ValueError("verified catalog checksum does not match")
+    dimensions = _image_dimensions(image)
+    item: Dict[str, Any] = {
+        "provider": _sanitize_provider_payload(photo),
+        "object_path": object_path,
+        "image_sha256": digest,
+        "image_bytes": len(image),
+        "content_type": _content_type(object_path),
+    }
+    if dimensions is not None:
+        item["width"], item["height"] = dimensions
+    return item
+
+
+def _sanitize_provider_payload(value: Any) -> Any:
+    """Keep provider evidence while excluding credentials, PII, and signed URLs."""
+    if isinstance(value, dict):
+        cleaned: Dict[str, Any] = {}
+        for key, child in value.items():
+            if not isinstance(key, str):
+                continue
+            normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+            if (
+                normalized in _PRIVATE_PROVIDER_KEYS
+                or normalized.endswith("token")
+                or normalized.endswith("tokens")
+                or normalized.endswith("url")
+            ):
+                continue
+            cleaned[key] = _sanitize_provider_payload(child)
+        return cleaned
+    if isinstance(value, list):
+        return [_sanitize_provider_payload(item) for item in value]
+    return value
+
+
+def _image_dimensions(body: bytes) -> Optional[tuple[int, int]]:
+    """Read PNG/JPEG dimensions without decoding or adding a dependency."""
+    if body.startswith(b"\x89PNG\r\n\x1a\n") and len(body) >= 24:
+        width = int.from_bytes(body[16:20], "big")
+        height = int.from_bytes(body[20:24], "big")
+        return (width, height) if width > 0 and height > 0 else None
+    if not body.startswith(b"\xff\xd8"):
+        return None
+    offset = 2
+    sof_markers = {
+        0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+        0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
+    }
+    while offset + 4 <= len(body):
+        if body[offset] != 0xFF:
+            offset += 1
+            continue
+        while offset < len(body) and body[offset] == 0xFF:
+            offset += 1
+        if offset >= len(body):
+            return None
+        marker_code = body[offset]
+        offset += 1
+        if marker_code in {0xD8, 0xD9}:
+            continue
+        if marker_code == 0xDA:
+            return None
+        if offset + 2 > len(body):
+            return None
+        length = int.from_bytes(body[offset:offset + 2], "big")
+        if length < 2 or offset + length > len(body):
+            return None
+        if marker_code in sof_markers and length >= 7:
+            height = int.from_bytes(body[offset + 3:offset + 5], "big")
+            width = int.from_bytes(body[offset + 5:offset + 7], "big")
+            return (width, height) if width > 0 and height > 0 else None
+        offset += length
     return None
 
 

@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from reveal_downloader.dashboard import handle_preview, handle_status, record_dashboard_run
+from reveal_downloader.dashboard import handle_status, record_dashboard_run
 
 
 VALID_PREVIEW_PATH = (
@@ -136,7 +136,7 @@ class DashboardStatusTests(unittest.TestCase):
         self.assertEqual(archive.deadline, 108.0)
         self.assertEqual(archive.clock(), 100.0)
 
-    def test_enabled_status_returns_expiring_opaque_preview_urls_without_paths(self):
+    def test_public_status_never_emits_private_preview_descriptors(self):
         records = [{
             "version": 1,
             "id": "c" * 32,
@@ -163,73 +163,9 @@ class DashboardStatusTests(unittest.TestCase):
         )
 
         self.assertEqual(status, 200)
-        self.assertTrue(payload["previews_enabled"])
-        self.assertEqual(len(payload["previews"]), 1)
-        self.assertTrue(payload["previews"][0]["url"].startswith("/api/preview?token="))
-        self.assertEqual(payload["previews"][0]["captured_at"], "2026-08-07T10:00:00Z")
+        self.assertNotIn("previews_enabled", payload)
+        self.assertNotIn("previews", payload)
         self.assertNotIn(VALID_PREVIEW_PATH, str(payload))
-
-    def test_preview_proxy_validates_token_path_and_image(self):
-        records = [{
-            "version": 1,
-            "id": "c" * 32,
-            "finished_at": "2026-08-07T12:00:00Z",
-            "status": "healthy",
-            "downloaded": 1,
-            "skipped": 0,
-            "failed": 0,
-            "verified": {"image": 1, "metadata": 1, "checksum": 1},
-            "recent_units": [{"object_path": VALID_PREVIEW_PATH}],
-        }]
-        archive = MemoryArchive(records)
-        environ = {
-            **self._environment(),
-            "CRON_SECRET": "preview-signing-secret-at-least-16",
-            "PREVIEWS_ENABLED": "true",
-        }
-        _, status_payload = handle_status(
-            environ, archive_factory=lambda *_: archive, epoch_now=1_786_100_000
-        )
-        token = status_payload["previews"][0]["url"].split("token=", 1)[1]
-
-        status, content_type, body = handle_preview(
-            environ,
-            token,
-            archive_factory=lambda *_: archive,
-            epoch_now=1_786_100_001,
-        )
-
-        self.assertEqual((status, content_type), (200, "image/jpeg"))
-        self.assertEqual(body, b"\xff\xd8preview\xff\xd9")
-        self.assertEqual(archive.read_image_args[0], VALID_PREVIEW_PATH)
-        self.assertEqual(handle_preview(environ, token + "x", archive_factory=lambda *_: archive, epoch_now=1_786_100_001)[0], 404)
-        self.assertEqual(handle_preview(environ, token, archive_factory=lambda *_: archive, epoch_now=1_786_100_301)[0], 404)
-
-    def test_preview_proxy_rejects_poisoned_private_object_path(self):
-        records = [{
-            "version": 1,
-            "id": "c" * 32,
-            "finished_at": "2026-08-07T12:00:00Z",
-            "status": "healthy",
-            "downloaded": 1,
-            "skipped": 0,
-            "failed": 0,
-            "verified": {"image": 1, "metadata": 1, "checksum": 1},
-            "recent_units": [{"object_path": "../../private/secret.jpg"}],
-        }]
-        archive = MemoryArchive(records)
-        environ = {
-            **self._environment(),
-            "CRON_SECRET": "preview-signing-secret-at-least-16",
-            "PREVIEWS_ENABLED": "true",
-        }
-
-        status, payload = handle_status(
-            environ, archive_factory=lambda *_: archive, epoch_now=1_786_100_000
-        )
-
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["previews"], [])
 
     def test_status_rejects_poisoned_or_non_utc_finished_timestamp(self):
         for poisoned in (
