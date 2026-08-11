@@ -18,28 +18,24 @@ concurrency:
 jobs:
   fulfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install DeerID runtime
-        run: python -m pip install .
-      - name: Submit queued requests to Reveal
+      - name: Submit queued requests through secured production endpoint
         env:
-          TACTACAM_USERNAME: ${{ secrets.TACTACAM_USERNAME }}
-          TACTACAM_PASSWORD: ${{ secrets.TACTACAM_PASSWORD }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          SUPABASE_BUCKET: tactacam-photos
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
           HD_REQUEST_BATCH: ${{ inputs.limit || '20' }}
         run: |
-          test -n "$TACTACAM_USERNAME"
-          test -n "$TACTACAM_PASSWORD"
-          test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_SECRET_KEY"
-          python -m reveal_downloader.hd_request_worker
+          set -euo pipefail
+          test -n "$CRON_SECRET"
+          [[ "$HD_REQUEST_BATCH" =~ ^[0-9]+$ ]]
+          test "$HD_REQUEST_BATCH" -ge 1
+          test "$HD_REQUEST_BATCH" -le 20
+          status="$(curl --silent --show-error \
+            --output response.json \
+            --write-out '%{http_code}' \
+            --max-time 58 \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            "https://deer-re-id.vercel.app/api/hd_requests?limit=$HD_REQUEST_BATCH")"
+          python -m json.tool response.json
+          test "$status" -ge 200
+          test "$status" -lt 300

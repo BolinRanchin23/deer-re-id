@@ -1,6 +1,7 @@
 """Bounded fulfillment worker for HD requests queued before live submission existed."""
 
 import json
+import hmac
 import os
 import time
 from typing import Any, Callable, Mapping
@@ -16,6 +17,7 @@ def run_worker(
     environ: Mapping[str, str],
     *,
     max_requests: int = 20,
+    deadline_seconds: float = HD_QUEUE_DEADLINE_SECONDS,
     catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
     reveal_factory: Callable[[str, str], Any] = RevealClient,
 ) -> dict[str, Any]:
@@ -29,7 +31,7 @@ def run_worker(
         raise ValueError("max_requests must be between 1 and 50")
 
     clock = time.monotonic
-    deadline = clock() + HD_QUEUE_DEADLINE_SECONDS
+    deadline = clock() + deadline_seconds
     catalog = catalog_factory(
         environ["SUPABASE_URL"], environ["SUPABASE_SECRET_KEY"],
         environ.get("SUPABASE_BUCKET", "tactacam-photos"),
@@ -79,6 +81,25 @@ def run_worker(
         "unknown": unknown,
         "empty": empty,
     }
+
+
+def handle_hd_queue(
+    environ: Mapping[str, str],
+    authorization: str | None,
+    *,
+    max_requests: int = 20,
+) -> tuple[int, dict[str, Any]]:
+    """Authorize a Vercel queue-drain request and keep it within one invocation."""
+    secret = environ.get("CRON_SECRET", "")
+    if len(secret) < 16:
+        return 503, {"ok": False, "error": "CRON_SECRET is not configured"}
+    if not authorization or not hmac.compare_digest(authorization, f"Bearer {secret}"):
+        return 401, {"ok": False, "error": "unauthorized"}
+    try:
+        result = run_worker(environ, max_requests=max_requests, deadline_seconds=50.0)
+    except (OSError, RuntimeError, TypeError, ValueError, StorageError):
+        return 503, {"ok": False, "error": "HD queue unavailable"}
+    return (200 if result.get("ok") else 502), result
 
 
 def main() -> int:
