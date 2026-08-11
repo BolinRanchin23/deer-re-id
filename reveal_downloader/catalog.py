@@ -95,6 +95,56 @@ class SupabaseCatalog:
             {"p_model_name": model_name, "p_model_version": model_version},
         )
 
+    def read_gate1b_metrics(self) -> Any:
+        return self._rpc("deerid_gate1b_metrics", {})
+
+    def read_gate1b_pending(self, model_name: str, model_version: str, limit: int = 20) -> Any:
+        return self._rpc(
+            "deerid_gate1b_pending",
+            {
+                "p_model_name": model_name,
+                "p_model_version": model_version,
+                "p_limit": max(1, min(60, int(limit))),
+            },
+        )
+
+    def record_gate1b_batch(
+        self, model_name: str, model_version: str, results: list[dict[str, Any]]
+    ) -> Any:
+        return self._rpc(
+            "deerid_record_gate1b_batch",
+            {
+                "p_model_name": model_name,
+                "p_model_version": model_version,
+                "p_results": results,
+            },
+        )
+
+    def record_gate1b_label(
+        self,
+        media_id: str,
+        assessment_id: int,
+        review_version: int,
+        species_label: str,
+        visible_antler: str,
+        probable_male: str,
+        head_visibility: str,
+        note: str,
+    ) -> Any:
+        return self._rpc(
+            "deerid_record_gate1b_label",
+            {
+                "p_media_id": media_id,
+                "p_assessment_id": assessment_id,
+                "p_review_version": review_version,
+                "p_species_label": species_label,
+                "p_visible_antler": visible_antler,
+                "p_probable_male": probable_male,
+                "p_head_visibility": head_visibility,
+                "p_note": note or None,
+            },
+        )
+
     def resolve_media_object(self, media_id: str) -> Any:
         return self._rpc("deerid_private_media_object", {"p_media_id": media_id})
 
@@ -197,10 +247,12 @@ def handle_library(
         pipeline = _sanitize_pipeline(
             catalog.read_gate1_funnel(GATE1_MODEL_NAME, GATE1_MODEL_VERSION)
         )
+        gate1b = _sanitize_gate1b_metrics(catalog.read_gate1b_metrics())
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
         return 503, {"ok": False, "error": "library unavailable"}
     payload: Dict[str, Any] = {
-        "ok": True, "photos": photos, "cameras": cameras, "pipeline": pipeline
+        "ok": True, "photos": photos, "cameras": cameras, "pipeline": pipeline,
+        "gate1b": gate1b,
     }
     mapbox_token = environ.get("NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN", "").strip()
     if _MAPBOX_TOKEN.fullmatch(mapbox_token):
@@ -336,6 +388,52 @@ def handle_review(
     return 200, {"ok": True, "media_id": media_id, "action": action}
 
 
+def handle_gate1b_label(
+    environ: Mapping[str, str],
+    token: str,
+    species_label: str,
+    visible_antler: str,
+    probable_male: str,
+    head_visibility: str,
+    note: str = "",
+    *,
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Append one human correction without overwriting model evidence."""
+    if species_label not in {"whitetail", "axis", "other_deer", "non_deer", "unknown"}:
+        return 400, {"ok": False, "error": "invalid species label"}
+    if visible_antler not in {"yes", "no", "unknown"}:
+        return 400, {"ok": False, "error": "invalid antler label"}
+    if probable_male not in {"yes", "no", "unknown"}:
+        return 400, {"ok": False, "error": "invalid male label"}
+    if head_visibility not in {"full", "partial", "none", "unknown"}:
+        return 400, {"ok": False, "error": "invalid head visibility"}
+    if not isinstance(note, str) or len(note) > 500:
+        return 400, {"ok": False, "error": "invalid note"}
+    key = _signing_key(environ)
+    current = int(time.time()) if epoch_now is None else int(epoch_now)
+    capability = _verify_review_token(token, key, current) if key is not None else None
+    url = environ.get("SUPABASE_URL", "")
+    secret = environ.get("SUPABASE_SECRET_KEY", "")
+    if capability is None or not url or not secret:
+        return 404, {"ok": False, "error": "not found"}
+    media_id, assessment_id, review_version = capability
+    try:
+        catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos"))
+        clock = time.monotonic
+        catalog.set_deadline(clock() + LIBRARY_DEADLINE_SECONDS, clock=clock)
+        result = catalog.record_gate1b_label(
+            media_id, assessment_id, review_version, species_label,
+            visible_antler, probable_male, head_visibility, note.strip(),
+        )
+        if not isinstance(result, Mapping) or not result.get("ok"):
+            raise StorageError("Gate 1B correction failed")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
+        return 503, {"ok": False, "error": "label unavailable"}
+    return 200, {"ok": True, "media_id": media_id, "label_id": result.get("label_id")}
+
+
 def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
     if not isinstance(value, list) or len(value) > MAX_LIBRARY_PHOTOS:
         raise StorageError("Private library is unavailable")
@@ -343,7 +441,7 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
     allowed = {
         "id", "captured_at", "camera_id", "camera_name", "variant", "width", "height",
         "labels", "animals", "hd_photo", "has_headshot", "battery_level", "signal_level",
-        "gate1", "review_decision",
+        "gate1", "gate1b", "review_decision",
     }
     for item in value:
         media_id = item.get("id") if isinstance(item, Mapping) else None
@@ -359,9 +457,24 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
                 raise StorageError("Private library is unavailable")
         else:
             pending_hd = False
+        gate1b = safe.get("gate1b")
+        if gate1b is not None:
+            if not isinstance(gate1b, Mapping):
+                raise StorageError("Private library is unavailable")
+            if gate1b.get("queue") not in {"likely_male", "uncertain", "female_audit", "suppressed"}:
+                raise StorageError("Private library is unavailable")
+            for field, choices in (
+                ("species_label", {"whitetail", "axis", "other_deer", "non_deer", "unknown", None}),
+                ("visible_antler", {"yes", "no", "unknown", None}),
+                ("probable_male", {"yes", "no", "unknown", None}),
+                ("head_visibility", {"full", "partial", "none", "unknown", None}),
+            ):
+                if gate1b.get(field) not in choices:
+                    raise StorageError("Private library is unavailable")
         if (
             isinstance(gate1, Mapping)
             and gate1.get("route") == "review"
+            and (not isinstance(gate1b, Mapping) or gate1b.get("queue") != "suppressed")
             and not pending_hd
             and (decision is None or (isinstance(decision, Mapping) and decision.get("action") == "defer"))
         ):
@@ -413,6 +526,53 @@ def _sanitize_pipeline(value: Any) -> Dict[str, Any]:
         output[field] = count
     if output["assessed_thumbnails"] + output["pending_thumbnails"] != output["total_thumbnails"]:
         raise StorageError("Gate 1 funnel is unavailable")
+    return output
+
+
+def _sanitize_gate1b_metrics(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, Mapping) or value.get("model_name") != "Ollama-Gemma4-Vision":
+        raise StorageError("Gate 1B metrics are unavailable")
+    count_fields = (
+        "predictions", "likely_male", "uncertain", "female_candidates",
+        "human_labels", "labeled_buck_events", "labeled_cameras",
+        "labeled_day", "labeled_ir", "labeled_axis", "minimum_labels",
+        "minimum_buck_events",
+    )
+    output: Dict[str, Any] = {"model_name": value["model_name"]}
+    for field in count_fields:
+        count = value.get(field)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise StorageError("Gate 1B metrics are unavailable")
+        output[field] = count
+    for field in ("suppression_enabled", "suppression_ready"):
+        if not isinstance(value.get(field), bool):
+            raise StorageError("Gate 1B metrics are unavailable")
+        output[field] = value[field]
+    audit = value.get("female_audit_percent")
+    recall_target = value.get("required_buck_recall")
+    for key in ("prediction_cameras", "predicted_whitetail", "predicted_axis", "predicted_other_deer", "predicted_non_deer", "predicted_day", "predicted_ir", "predicted_mixed_groups"):
+        raw = value.get(key, 0)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw < 0:
+            raise StorageError("Gate 1B metric is invalid")
+        output[key] = int(raw)
+    recall = value.get("buck_recall")
+    if not isinstance(audit, int) or isinstance(audit, bool) or not 1 <= audit <= 100:
+        raise StorageError("Gate 1B metrics are unavailable")
+    if not isinstance(recall_target, (int, float)) or isinstance(recall_target, bool) or not 0 <= recall_target <= 1:
+        raise StorageError("Gate 1B metrics are unavailable")
+    if recall is not None and (
+        not isinstance(recall, (int, float)) or isinstance(recall, bool) or not 0 <= recall <= 1
+    ):
+        raise StorageError("Gate 1B metrics are unavailable")
+    output.update({
+        "female_audit_percent": audit,
+        "required_buck_recall": float(recall_target),
+        "buck_recall": None if recall is None else float(recall),
+    })
+    if output["likely_male"] + output["uncertain"] + output["female_candidates"] != output["predictions"]:
+        raise StorageError("Gate 1B metrics are unavailable")
+    if output["human_labels"] > output["predictions"]:
+        raise StorageError("Gate 1B metrics are unavailable")
     return output
 
 

@@ -6,6 +6,7 @@ from reveal_downloader.catalog import (
     handle_library,
     handle_library_preview,
     handle_review,
+    handle_gate1b_label,
 )
 from reveal_downloader.client import HDRequestRejected, RevealError
 from reveal_downloader.supabase import _postgrest_auth_headers
@@ -71,6 +72,28 @@ class MemoryCatalog:
             "unresolved_review": 59,
             "resolved_review": 1,
         }
+
+    def read_gate1b_metrics(self):
+        return {
+            "model_name": "Ollama-Gemma4-Vision", "predictions": 0,
+            "likely_male": 0, "uncertain": 0, "female_candidates": 0,
+            "human_labels": 0, "labeled_buck_events": 0, "labeled_cameras": 0,
+            "labeled_day": 0, "labeled_ir": 0, "labeled_axis": 0,
+            "buck_recall": None, "suppression_enabled": False,
+            "suppression_ready": False, "female_audit_percent": 10,
+            "minimum_labels": 100, "minimum_buck_events": 20,
+            "required_buck_recall": 0.99,
+        }
+
+    def record_gate1b_label(
+        self, media_id, assessment_id, review_version, species_label,
+        visible_antler, probable_male, head_visibility, note,
+    ):
+        self.gate1b_label = (
+            media_id, assessment_id, review_version, species_label,
+            visible_antler, probable_male, head_visibility, note,
+        )
+        return {"ok": True, "label_id": 9}
 
     def resolve_media_object(self, media_id):
         self.resolved = media_id
@@ -325,6 +348,37 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertIsNone(catalog.hd_failed)
         self.assertIsNone(catalog.hd_completed)
 
+    def test_gate1b_human_correction_is_appended_without_resolving_review(self):
+        environment = self.environment()
+        catalog = MemoryCatalog()
+        _, payload = handle_library(
+            environment, catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
+        )
+        status, result = handle_gate1b_label(
+            environment,
+            payload["photos"][0]["review_token"],
+            "axis", "yes", "yes", "full", "spotted axis buck",
+            catalog_factory=lambda *_: catalog,
+            epoch_now=1_786_200_001,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["label_id"], 9)
+        self.assertEqual(
+            catalog.gate1b_label,
+            (
+                "11111111-1111-4111-8111-111111111111", 17, 0,
+                "axis", "yes", "yes", "full", "spotted axis buck",
+            ),
+        )
+        self.assertIsNone(catalog.reviewed)
+
+    def test_gate1b_human_correction_rejects_invalid_enumerations(self):
+        status, result = handle_gate1b_label(
+            self.environment(), "ignored", "doe", "no", "no", "full"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(result["error"], "invalid species label")
+
 
 class Gate1ReviewUiTests(unittest.TestCase):
     def test_review_ui_is_model_selected_and_actionable(self):
@@ -359,6 +413,24 @@ class Gate1ReviewUiTests(unittest.TestCase):
             self.assertIn(f'id="{element_id}"', html)
             self.assertIn(element_id, script)
         self.assertIn("Most recent 60 shown", html)
+
+    def test_gate1b_ui_has_three_queues_and_append_only_correction_controls(self):
+        html = Path("public/index.html").read_text()
+        script = Path("public/app.js").read_text()
+        for queue in ("likely_male", "uncertain", "female_audit"):
+            self.assertIn(f'data-review-queue="{queue}"', html)
+            self.assertIn(queue, script)
+        for field in ("species_label", "visible_antler", "probable_male", "head_visibility"):
+            self.assertIn(field, script)
+        self.assertIn("/api/gate1b_label", script)
+        self.assertIn("Save corrections", script)
+        self.assertIn("suppression_ready", script)
+        self.assertIn("suppression_enabled", script)
+
+    def test_female_candidates_are_not_bulk_suppressed_by_client_code(self):
+        script = Path("public/app.js").read_text()
+        self.assertNotIn("triage_class === 'female_candidate'", script)
+        self.assertIn("gate1b.queue", script)
 
 
 if __name__ == "__main__":

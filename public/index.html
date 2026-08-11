@@ -134,9 +134,22 @@
     .review-focus-card .photo-meta { padding: 24px; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; border-left: 1px solid var(--line); }
     .review-focus-card .photo-meta strong { font-size: 18px; }
     .gate1-evidence { color: var(--muted); font-size: 12px; }
+    .gate1b-reason { color: var(--faint); font-size: 11px; }
+    .review-queues { width: min(920px, 100%); margin: 0 auto 12px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .review-queues button { min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: var(--panel); cursor: pointer; }
+    .review-queues button.active { color: #0c140e; border-color: var(--moss); background: var(--moss-bright); font-weight: 650; }
+    .queue-count { min-width: 20px; padding: 1px 5px; border-radius: 99px; color: inherit; background: rgba(0,0,0,.16); font-size: 9px; }
+    .gate1b-safety { width: min(920px, 100%); margin: 0 auto 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: var(--panel); font-size: 11px; }
+    .gate1b-safety.locked { border-color: rgba(220,181,109,.35); }
+    .gate1b-safety.enabled { border-color: rgba(130,184,137,.35); color: var(--moss-bright); }
+    .gate1b-corrections { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+    .gate1b-corrections label { display: grid; gap: 3px; color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+    .gate1b-corrections select { width: 100%; min-height: 38px; padding: 6px 7px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel-2); font-size: 11px; text-transform: none; letter-spacing: normal; }
+    .gate1b-corrections .save-corrections { grid-column: 1/-1; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--moss-bright); background: var(--moss-wash); cursor: pointer; font-size: 11px; }
     .review-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .review-actions button { min-height: 52px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: var(--panel-2); cursor: pointer; font-size: 12px; }
     .review-actions button:hover { color: var(--ink); border-color: var(--moss); background: var(--moss-wash); }
+    .review-actions button.hd-priority { color: var(--moss-bright); border-color: rgba(130,184,137,.55); box-shadow: inset 0 0 0 1px rgba(130,184,137,.18); }
     .review-actions button:disabled { cursor: wait; opacity: .45; }
     .review-enter-right { animation: review-enter-right .24s cubic-bezier(.22,.8,.3,1); }
     .review-exit-left { animation: review-exit-left .14s ease-in forwards; pointer-events: none; }
@@ -190,6 +203,7 @@
       .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
       .deer-grid { grid-template-columns: 1fr; }
       .review-stage { min-height: 0; }
+      .review-queues { grid-template-columns: 1fr; }
       .review-focus-card { grid-template-columns: 1fr; min-height: 0; }
       .review-focus-card > img { min-height: 0; height: auto; max-height: 58vh; aspect-ratio: 4/3; }
       .review-focus-card .photo-meta { padding: 16px; border-left: 0; border-top: 1px solid var(--line); }
@@ -276,6 +290,12 @@
 
       <section id="view-review" class="view" data-view-panel="review" hidden>
         <div class="view-head"><div><p class="eyebrow">Human review</p><h1>Worth a closer look?</h1><p class="view-copy">Triage low-cost cloud thumbnails before requesting HD media or assigning an identity.</p></div><div id="review-summary" class="updated">Loading queue…</div></div>
+        <div class="review-queues" role="tablist" aria-label="Gate 1B review queue">
+          <button type="button" class="active" data-review-queue="likely_male">Likely male / antlers <span class="queue-count" data-queue-count>0</span></button>
+          <button type="button" data-review-queue="uncertain">Uncertain <span class="queue-count" data-queue-count>0</span></button>
+          <button type="button" data-review-queue="female_audit">Female-only audit <span class="queue-count" data-queue-count>0</span></button>
+        </div>
+        <div id="gate1b-safety" class="gate1b-safety locked">Loading Gate 1B validation state…</div>
         <div id="review-stage" class="review-stage" aria-live="polite"></div>
       </section>
 
@@ -306,6 +326,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=6" defer></script>
+  <script src="/app.js?v=7" defer></script>
 </body>
 </html>

@@ -46,7 +46,7 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn('id="workspace-shell"', html)
         self.assertNotIn("sessionStorage", html + app_js)
         self.assertNotIn("<script>", html)
-        self.assertIn('<script src="/app.js?v=6" defer></script>', html)
+        self.assertIn('<script src="/app.js?v=7" defer></script>', html)
         self.assertNotIn("GOOGLE_MAPS_BROWSER_KEY", html)
 
     def test_vercel_config_sets_static_dashboard_security_headers_without_cron(self):

@@ -1,0 +1,239 @@
+# DeerID Photo-to-Profile Process Flow
+
+**Updated:** August 11, 2026
+**Scope:** Most current agreed flow from field capture through human-confirmed deer-profile assignment.
+**Status key:** ✅ Operational now · 🧪 Operational but calibration-locked · 🧭 Planned · 🔬 Research-grade
+
+## Verdict
+
+**HARD-BUT-DOABLE:** The field-to-review and human-triggered HD pipeline is operational. Gate 1B male/antler triage now runs locally with append-only model evidence, three review queues, human attribute corrections, and a recall gate that keeps female-only bulk suppression locked until local labels pass validation. Individual-deer re-identification remains a future, human-confirmed open-set retrieval process—not autonomous profile classification.
+
+## End-to-end flow
+
+```mermaid
+flowchart TD
+    A[Field camera trigger] --> B{Capture source}
+
+    B -->|Reveal cellular camera — current| C[Reveal cloud thumbnail + provider metadata]
+    B -->|Future DeerID field node / Route C| D[Blind: stable animal-vs-blank filter]
+    D -->|Animal-containing event| E[Durable local queue and upload]
+    D -->|Likely blank| D1[Retain/audit locally per policy]
+    E --> F[Base receives original media + metadata]
+
+    C --> G[Scheduled or manual Reveal ingestion]
+    G --> H[Verify image bytes, type, dimensions and SHA-256]
+    F --> H
+    H --> I[Private Supabase Storage + searchable catalog]
+    I --> J[Preserve raw provider metadata, camera, time, GPS, weather and telemetry]
+
+    J --> K[Gate 1: SpeciesNet 4.0.3a]
+    K --> L[Stable camera/time event grouping]
+    L --> M{One best representative per event}
+    M -->|Target deer| N[Review candidate]
+    M -->|Uncertain animal or model failure| N
+    M -->|Confident non-target| O[Archive]
+    M -->|Blank / below threshold| O
+    M -->|Lower-value burst frames| P[Event duplicates retained]
+
+    N --> Q[Gate 1B: independent attributes]
+    Q --> Q1[Species]
+    Q --> Q2[Visible antler]
+    Q --> Q3[Probable male]
+    Q --> Q4[Head visibility]
+    Q --> Q5[Animal count / mixed group / all assessed]
+    Q --> R{Recall-preserving event triage}
+
+    R -->|Any positive male or antler evidence| S[Primary / likely-male queue]
+    R -->|Hidden head, mixed group, disagreement or failure| T[Uncertain queue]
+    R -->|Every target animal clearly assessed with no male evidence| U[Female-only candidate]
+    U --> U1[Suppress from routine queue only after calibration]
+    U1 --> U2[Versioned audit sample]
+
+    S --> V{HD needed?}
+    T --> V
+    U2 --> W[Human audit/correction]
+    V -->|Yes: automatic policy or human Request HD| X[Durable fenced HD request]
+    V -->|No: thumbnail is sufficient for decision| Y[Human review]
+
+    X --> X1[Reveal batch HD request]
+    X1 -->|Explicit acknowledgement| X2[Submitted]
+    X1 -->|Explicit refusal| X3[Failed; safe retry allowed]
+    X1 -->|Timeout/crash/ambiguous response| X4[Unknown; do not auto-retry]
+    X2 --> X5[Later ingestion detects hdPhoto=true]
+    X4 --> X5
+    X5 --> X6[Download and verify returned HD media]
+    X6 --> X7{Real quality gain?}
+    X7 -->|Yes| Y
+    X7 -->|No / malformed / not improved| X8[Retain evidence and flag for review]
+    X8 --> Y
+
+    Y --> Z{Human decision}
+    Z -->|Request HD| X
+    Z -->|Keep for ID| AA[Identity evidence queue]
+    Z -->|Not useful| AB[Resolve review; retain archived evidence]
+    Z -->|Defer| AC[Leave unresolved for later review]
+
+    AA --> AD[Per-animal detection and crop separation]
+    AD --> AE{Identity-worthy?}
+    AE -->|No| AF[Retain event; no identity retrieval]
+    AE -->|Yes| AG[Cue-specific crops]
+    AG --> AG1[Full body]
+    AG --> AG2[Head / face / ears]
+    AG --> AG3[Antlers]
+    AG --> AG4[Axis left flank]
+    AG --> AG5[Axis right flank]
+
+    AG --> AH[Versioned embeddings]
+    AH --> AI[Open-set nearest-neighbor retrieval]
+    AI --> AJ[Filter/rank by species, season, life stage, camera/time context and cue compatibility]
+    AJ --> AK[Top-k candidate profiles + unknown/new option]
+    AK --> AL{Human identity decision}
+
+    AL -->|Confirm existing candidate| AM[Append confirmed media assignment]
+    AL -->|None match / new deer| AN[Create long-lived animal + season/stage appearance profile]
+    AL -->|Reject candidate| AO[Store rejection; do not alter confirmed identity]
+    AL -->|Insufficient evidence| AP[Keep unknown / defer / seek more evidence]
+    AL -->|Correct past identity| AQ[Merge or split with preserved history]
+
+    AM --> AR[Update profile evidence view]
+    AN --> AR
+    AQ --> AR
+    AR --> AS[Human-confirmed named deer profile]
+```
+
+## Current implementation boundary
+
+### ✅ Operational now
+
+1. **Reveal cloud ingestion**
+   - Retrieves cloud-synced media and provider metadata.
+   - Verifies image format, dimensions, byte count and SHA-256.
+   - Stores image, original metadata and checksum completion marker in private Supabase Storage.
+   - Catalogs camera, capture time, GPS when supplied, weather, battery, signal and provenance.
+   - Repeated syncs are duplicate-safe; an HD upgrade causes the media to be fetched and cataloged again rather than mistaken for the completed thumbnail.
+
+2. **Gate 1 screening and event grouping**
+   - SpeciesNet `4.0.3a` supplies animal/species evidence.
+   - Current events use a stable camera/time grouping and retain a single best review representative while keeping lower-value burst frames as event duplicates.
+   - Target deer, uncertain animals and model failures go to review.
+   - Confident non-targets and blank/below-threshold captures remain archived.
+   - Model evidence and routing reasons are versioned and append-only.
+
+3. **Human review actions**
+   - **Request HD:** atomically reserves the review, calls Reveal, and records the provider outcome.
+   - **Keep for ID:** resolves the current review as identity-relevant evidence. It does **not yet** run re-ID.
+   - **Not useful:** resolves the review without deleting the archived media.
+   - **Defer:** leaves the item unresolved so it can be reviewed later.
+   - Decisions are tied to a specific Gate 1 assessment and review version so stale browser actions cannot overwrite a newer decision.
+
+4. **HD request and retrieval state machine**
+   - States: `queued → requesting → submitted → available`, with `failed`, `unknown` and `cancelled` side states.
+   - A request token fences each provider call and prevents stale workers from finalizing newer work.
+   - Only an explicit, structurally valid Reveal acknowledgement becomes `submitted`.
+   - An ambiguous provider outcome becomes `unknown` and is **not automatically replayed**, avoiding duplicate billable requests.
+   - A later catalog sync reconciles `submitted`, `unknown` or other pending states when Reveal reports `hdPhoto=true`.
+
+### 🧪 Operational, but not yet the suppression authority
+
+**Gate 1B** runs after stable event grouping and before HD prioritization/primary review. The self-hosted base executes the pinned local `gemma4:e4b` vision model every 15 minutes and stores an exact model/prompt version with every append-only prediction. The first model-assisted labeling batch is stratified across all four cameras; its outputs are provisional evidence, not human ground truth. Gate 1B produces independent outputs for:
+
+- `species`: whitetail, axis, other deer, non-deer or unknown;
+- `visible_antler`: yes, no or unknown;
+- `probable_male`: yes, no or unknown;
+- `head_visibility`: full, partial, none or unknown;
+- lighting domain: day/color, night/IR or unknown;
+- animal count, mixed-group status and whether every animal was assessable.
+
+Its triage classes are:
+
+- **Likely male:** any positive antler or probable-male evidence. One possible buck keeps the whole event.
+- **Uncertain:** partial/hidden heads, mixed groups, unassessed animals, non-target ambiguity, malformed output or model failure.
+- **Female candidate:** target species only, with every animal clearly assessed, full head visibility and no male/antler evidence.
+
+A female candidate is **not the same as a confirmed female**. Routine suppression and automatic HD prioritization remain blocked on a representative local validation set, recall calibration and ongoing audits.
+
+### 🧭 Planned next
+
+1. Human-label the model-assisted validation batch through the four correction controls, covering all four cameras, whitetail, axis, day/color, night/IR, mixed groups and difficult negatives.
+2. Report the labeled buck-event recall and every false-negative before considering explicit activation of bulk female-only suppression.
+3. Use the resulting labels to calibrate or train task-specific heads; the current general-purpose vision model is a conservative prioritizer, not a validated sex/species classifier.
+4. Request the best one or two frames for uncertain/mixed events rather than every burst frame.
+5. After HD retrieval, perform deeper per-animal detection and separate each visible deer before any identity operation.
+6. Add explicit technical and task gates:
+   - `identity_eligible`
+   - `age_eligible`
+   - `spread_eligible`
+   - `beam_tine_eligible`
+   - axis left/right-flank eligibility
+7. Queue identity-worthy evidence for future embeddings and candidate retrieval.
+
+### 🔬 Future re-identification process
+
+Re-ID will be **open-set retrieval with human confirmation**, not a classifier that must force every photo into an existing name.
+
+1. Detect each animal independently; never assign one event-level identity to every deer in a group photo.
+2. Create reproducible, cue-specific crops and embeddings rather than one irreversible “master embedding.”
+3. Search compatible season/stage galleries and return ranked top-k candidates.
+4. Keep model similarity, calibrated match probability and human confirmation as separate fields.
+5. Let the reviewer:
+   - confirm an existing deer;
+   - reject one or more candidates;
+   - create a new deer when none match;
+   - leave the animal unknown when evidence is insufficient;
+   - merge duplicate identities or split a contaminated profile.
+6. Append every assignment/correction. Never overwrite raw media, model outputs or decision history.
+7. Maintain one long-lived animal record with season/stage-scoped appearance profiles because coat, body, injuries and antlers change over time.
+
+## Human decisions and their downstream triggers
+
+| Human decision | Immediate effect | Downstream trigger |
+|---|---|---|
+| **Request HD** | Reserves and resolves the current review only after provider handling is safely recorded | Reveal HD request → later sync → verified HD retrieval → renewed quality/identity review |
+| **Keep for ID** | Marks current media as identity-relevant and resolves Gate 1 review | Planned per-animal crop, identity-quality gate, embedding and top-k retrieval |
+| **Not useful** | Resolves the review | No re-ID or measurement work; immutable evidence remains in archive |
+| **Defer** | Keeps the review unresolved | Item returns for later human decision; no billable or identity side effect |
+| **Correct Gate 1B attributes** | Stores human labels separately from model output | Validation metrics, threshold calibration and future training data |
+| **Confirm existing profile** | Appends a human-confirmed media-to-appearance-profile assignment | Profile evidence/history updates; confirmed sample may enter future gallery builds |
+| **Reject candidate** | Records that a suggested match was wrong | Candidate score remains auditable; no confirmed profile change |
+| **Create new deer** | Creates a long-lived animal and current season/stage appearance profile | Current evidence becomes the seed for later retrieval |
+| **Unknown / insufficient evidence** | Avoids a forced false match | Await another angle/event or request better evidence when available |
+| **Merge profiles** | Marks duplicate identity relationship without erasing records | Future retrieval points to surviving animal; history remains traceable |
+| **Split profile** | Removes contaminated assignments into a distinct identity path | Rebuild affected galleries/embeddings while preserving correction history |
+
+## Separate identity and measurement paths
+
+An image can be useful for identity but invalid for age or antler measurements. After HD/deeper detection, DeerID must route these independently:
+
+```text
+verified media + per-animal crops
+  ├─ identity-worthy → re-ID retrieval → human profile decision
+  └─ measurement-worthy → structured age-class / antler-score review
+```
+
+- Exact-year age from a trail-camera photo is not an approved output.
+- Age and scoring observations remain separate from identity assignments and from derived profile summaries.
+- IR, occlusion, pose and missing scale references can invalidate measurement while leaving identity cues usable.
+
+## Fail-safe rules that remain mandatory
+
+1. **No visible antler does not mean female.**
+2. **One possible buck keeps the event in the high-recall path.**
+3. **Model failure or malformed output abstains to uncertainty; it never suppresses the event.**
+4. **Low-resolution similarity may prioritize HD but must not reject a possibly new deer.**
+5. **Every suppressed stratum receives ongoing human audit samples.**
+6. **Raw media, metadata, hashes, crops, model versions and human decisions remain auditable.**
+7. **Profile identity is human-confirmed; similarity alone never becomes a named deer.**
+8. **Merge/split corrections preserve history rather than rewriting it.**
+
+## Advancement gates
+
+- **Gate 1 species screening:** exceed 90% species accuracy on a locally labeled set and operate stably for multiple off-grid days through cloudy December conditions before field dependence.
+- **Gate 1B suppression/HD policy:** target approximately 99% human-labeled buck-event recall, review every miss, and demonstrate a skipped-event false-negative rate below 1% with sample counts and uncertainty reported. These are engineering targets, not promised performance.
+- **Stage 1 re-ID fine-tuning:** proceed only if confirmed within-season top-5 retrieval precision is approximately 70–80% or better. Otherwise, embeddings remain a human-reviewed retrieval aid.
+- Report whitetail vs. axis, day/color vs. night/IR, and single- vs. multi-animal results separately.
+
+## Architecture ownership
+
+- **Route C (current direction):** the future field “blind” performs only stable animal/blank filtering; the base performs species classification, Gate 1B, HD/retrieval logic, embeddings, matching and review.
+- **Route A:** the base centrally validates and reprocesses the historical archive using the same versioned stages.
+- The same profile decision model applies to Reveal cloud photos, future field-node uploads and historical imports.

@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Quiet local scheduler entry point for the self-hosted Gate 1B model."""
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import urllib.request
+
+PROJECT_REF = "vypmpmlhuqwvrxypowqa"
+PROJECT_URL = f"https://{PROJECT_REF}.supabase.co"
+REPO = Path(__file__).resolve().parents[1]
+MODEL = "gemma4:e4b"
+
+
+def main() -> int:
+    lock = open("/tmp/deerid-gate1b.lock", "w", encoding="utf-8")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0
+
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as response:
+            tags = json.load(response)
+        names = {item.get("name") for item in tags.get("models", []) if isinstance(item, dict)}
+        if MODEL not in names:
+            raise RuntimeError(f"required local model {MODEL} is unavailable")
+
+        keys = subprocess.run(
+            [
+                "supabase", "projects", "api-keys", "--project-ref", PROJECT_REF,
+                "--output", "json",
+            ],
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        records = json.loads(keys.stdout)
+        service_key = next(
+            item["api_key"] for item in records
+            if item.get("name") == "service_role" and item.get("api_key")
+        )
+        environ = {
+            **os.environ,
+            "SUPABASE_URL": PROJECT_URL,
+            "SUPABASE_SECRET_KEY": service_key,
+            "SUPABASE_BUCKET": "tactacam-photos",
+            "GATE1B_OLLAMA_URL": "http://127.0.0.1:11434",
+            "GATE1B_OLLAMA_MODEL": MODEL,
+        }
+        completed = subprocess.run(
+            [sys.executable, "-m", "reveal_downloader.gate1b_worker", "--limit", "20"],
+            cwd=REPO,
+            env=environ,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        result = json.loads(completed.stdout)
+        if result.get("failed"):
+            raise RuntimeError(f"Gate 1B left {result['failed']} event(s) pending after model failure")
+        return 0
+    except Exception as exc:
+        print(f"DeerID Gate 1B scheduler failed: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

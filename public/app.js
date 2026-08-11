@@ -5,6 +5,8 @@ const formatDate = value => value ? new Date(value).toLocaleString([], {dateStyl
 let photos = [];
 let cameras = [];
 let pipeline = {};
+let gate1bMetrics = {};
+let activeReviewQueue = 'likely_male';
 let mapboxToken = '';
 let cameraMap = null;
 let activeView = 'overview';
@@ -24,8 +26,52 @@ function photoAnimals(item) {
 
 function needsReview(item) {
   const gate1 = item && item.gate1;
+  const gate1b = item && item.gate1b;
   const decision = item && item.review_decision;
-  return Boolean(gate1 && gate1.route === 'review' && item.review_token && (!decision || decision.action === 'defer'));
+  return Boolean(
+    gate1 && gate1.route === 'review' && item.review_token
+    && (!gate1b || gate1b.queue !== 'suppressed')
+    && (!decision || decision.action === 'defer')
+  );
+}
+
+function reviewQueueName(item) {
+  const gate1b = item && item.gate1b;
+  return gate1b && ['likely_male', 'uncertain', 'female_audit'].includes(gate1b.queue)
+    ? gate1b.queue : 'uncertain';
+}
+
+function belongsToActiveQueue(item) {
+  return needsReview(item) && reviewQueueName(item) === activeReviewQueue;
+}
+
+async function submitGate1bLabel(item, fields, button) {
+  if (!item.review_token || button.disabled) return;
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = 'Saving…';
+  try {
+    const payload = {token: item.review_token};
+    Object.entries(fields).forEach(([name, select]) => { payload[name] = select.value; });
+    const response = await fetch('/api/gate1b_label', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({ok: false}));
+    if (!response.ok || !data.ok) throw new Error('Corrections could not be saved.');
+    item.gate1b = item.gate1b || {queue: 'uncertain'};
+    item.gate1b.human_label = {
+      species_label: fields.species_label.value,
+      visible_antler: fields.visible_antler.value,
+      probable_male: fields.probable_male.value,
+      head_visibility: fields.head_visibility.value
+    };
+    button.textContent = 'Corrections saved';
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = original;
+    showError(error.message || 'Corrections could not be saved.');
+  }
 }
 
 async function submitReview(item, action, card) {
@@ -109,6 +155,49 @@ function makeChip(text, className = '') {
   return chip;
 }
 
+function makeCorrectionControls(item) {
+  const prediction = item.gate1b || {};
+  const current = prediction.human_label || prediction;
+  const form = document.createElement('div');
+  form.className = 'gate1b-corrections';
+  const fields = {};
+  const definitions = [
+    ['species_label', 'Species', [
+      ['whitetail', 'Whitetail'], ['axis', 'Axis deer'], ['other_deer', 'Other deer'],
+      ['non_deer', 'Not deer'], ['unknown', 'Unknown']
+    ]],
+    ['visible_antler', 'Antlers', [['yes', 'Visible'], ['no', 'Not visible'], ['unknown', 'Unknown']]],
+    ['probable_male', 'Male', [['yes', 'Probable male'], ['no', 'No male evidence'], ['unknown', 'Unknown']]],
+    ['head_visibility', 'Head', [['full', 'Fully visible'], ['partial', 'Partly visible'], ['none', 'Not visible'], ['unknown', 'Unknown']]]
+  ];
+  definitions.forEach(([name, labelText, choices]) => {
+    const label = document.createElement('label');
+    const caption = document.createElement('span');
+    caption.textContent = labelText;
+    const select = document.createElement('select');
+    select.name = name;
+    choices.forEach(([value, text]) => {
+      const option = document.createElement('option');
+      option.value = value; option.textContent = text;
+      select.appendChild(option);
+    });
+    select.value = choices.some(([value]) => value === current[name]) ? current[name] : 'unknown';
+    fields[name] = select;
+    label.append(caption, select);
+    form.appendChild(label);
+  });
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'save-corrections';
+  save.textContent = 'Save corrections';
+  save.addEventListener('click', event => {
+    event.stopPropagation();
+    submitGate1bLabel(item, fields, save);
+  });
+  form.appendChild(save);
+  return form;
+}
+
 function makePhotoCard(item, options = {}) {
   const card = document.createElement('article');
   card.className = 'card photo-card' + (options.review ? ' review-card' : '');
@@ -137,7 +226,15 @@ function makePhotoCard(item, options = {}) {
     evidence.className = 'gate1-evidence';
     const species = item.gate1.species_label || 'Uncertain animal';
     const confidence = Math.round(100 * Number(item.gate1.species_confidence || item.gate1.animal_confidence || 0));
-    evidence.textContent = `${species} · ${confidence}% · ${String(item.gate1.reason || 'model selected').replaceAll('_', ' ')}`;
+    const gate1b = item.gate1b || {};
+    const modelBits = gate1b.prediction_id
+      ? `${String(gate1b.species_label || 'unknown').replaceAll('_', ' ')} · antlers ${gate1b.visible_antler || 'unknown'} · male ${gate1b.probable_male || 'unknown'} · head ${gate1b.head_visibility || 'unknown'}`
+      : 'Gate 1B has not assessed this event yet';
+    evidence.textContent = `${species} · ${confidence}% · ${modelBits}`;
+    const modelReason = document.createElement('div');
+    modelReason.className = 'gate1b-reason';
+    modelReason.textContent = gate1b.reason || String(item.gate1.reason || 'model selected').replaceAll('_', ' ');
+    const corrections = makeCorrectionControls(item);
     const actions = document.createElement('div');
     actions.className = 'review-actions';
     [
@@ -149,6 +246,7 @@ function makePhotoCard(item, options = {}) {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.reviewAction = action;
+      if (action === 'request_hd' && gate1b.hd_recommended) button.classList.add('hd-priority');
       button.textContent = label;
       button.addEventListener('click', event => {
         event.stopPropagation();
@@ -156,7 +254,7 @@ function makePhotoCard(item, options = {}) {
       });
       actions.appendChild(button);
     });
-    meta.append(evidence, actions);
+    meta.append(evidence, modelReason, corrections, actions);
   }
   card.append(image, meta);
   return card;
@@ -209,12 +307,20 @@ function renderFilteredPhotos() {
 }
 
 function updateReviewCounts() {
-  const unresolved = n(pipeline.unresolved_review) || reviewQueue.length;
+  const unresolved = n(pipeline.unresolved_review) || photos.filter(needsReview).length;
+  const activeCount = photos.filter(belongsToActiveQueue).length;
   $('review-count').textContent = unresolved;
   $('review-nav-count').textContent = unresolved;
-  $('review-summary').textContent = unresolved
-    ? `${unresolved} awaiting a decision · ${Math.min(5, Math.max(0, reviewQueue.length - 1))} next photos ready`
-    : 'Review queue complete';
+  $('review-summary').textContent = activeCount
+    ? `${activeCount} loaded in ${activeReviewQueue.replaceAll('_', ' ')} · ${Math.min(5, Math.max(0, reviewQueue.length - 1))} next photos ready`
+    : `No loaded events in ${activeReviewQueue.replaceAll('_', ' ')}`;
+  document.querySelectorAll('[data-review-queue]').forEach(button => {
+    const queue = button.dataset.reviewQueue;
+    button.classList.toggle('active', queue === activeReviewQueue);
+    const count = photos.filter(item => needsReview(item) && reviewQueueName(item) === queue).length;
+    const counter = button.querySelector('[data-queue-count]');
+    if (counter) counter.textContent = count;
+  });
 }
 
 function preloadReviewQueue(count) {
@@ -281,6 +387,22 @@ async function refreshReviewBuffer() {
   } finally {
     reviewRefreshInFlight = false;
   }
+}
+
+function renderGate1bStatus() {
+  const target = $('gate1b-safety');
+  if (!target) return;
+  const labels = n(gate1bMetrics.human_labels);
+  const required = n(gate1bMetrics.minimum_labels);
+  const recall = typeof gate1bMetrics.buck_recall === 'number'
+    ? `${(100 * gate1bMetrics.buck_recall).toFixed(1)}%` : 'not measured';
+  const suppression_ready = gate1bMetrics.suppression_ready === true;
+  const suppression_enabled = gate1bMetrics.suppression_enabled === true;
+  const coverage = `${n(gate1bMetrics.predictions)} model-labeled events · ${n(gate1bMetrics.prediction_cameras)}/4 cameras · ${n(gate1bMetrics.predicted_day)} day · ${n(gate1bMetrics.predicted_ir)} IR · ${n(gate1bMetrics.predicted_axis)} predicted axis`;
+  target.className = 'gate1b-safety ' + (suppression_enabled ? 'enabled' : 'locked');
+  target.textContent = suppression_enabled
+    ? `Female-only suppression enabled · ${coverage} · measured buck recall ${recall} · ${labels} human labels`
+    : `Female-only suppression locked · ${coverage} · ${labels}/${required} human labels · buck recall ${recall}${suppression_ready ? ' · validation ready for explicit activation' : ''}`;
 }
 
 function renderPipeline() {
@@ -444,6 +566,7 @@ function updateCatalogViews(renderReviewView = true) {
   $('camera-nav-count').textContent = cameras.length;
   $('photo-nav-count').textContent = total;
   renderPipeline();
+  renderGate1bStatus();
   renderPhotoGrid($('recent-photos'), photos.slice(0, 8), {emptyTitle: 'No cataloged photos yet'});
   populateCameraFilter();
   renderFilteredPhotos();
@@ -461,8 +584,9 @@ async function fetchLibrary(options = {}) {
   photos = Array.isArray(data.photos) ? data.photos : [];
   cameras = Array.isArray(data.cameras) ? data.cameras : [];
   pipeline = data.pipeline && typeof data.pipeline === 'object' ? data.pipeline : {};
+  gate1bMetrics = data.gate1b && typeof data.gate1b === 'object' ? data.gate1b : {};
   mapboxToken = typeof data.mapbox_access_token === 'string' ? data.mapbox_access_token : '';
-  mergeReviewQueue(photos.filter(needsReview), Boolean(options.preserveReview));
+  mergeReviewQueue(photos.filter(belongsToActiveQueue), Boolean(options.preserveReview));
   updateCatalogViews(options.renderReviewView !== false);
 }
 
@@ -493,6 +617,11 @@ async function initialize() {
   document.querySelectorAll('[data-open-view]').forEach(button => button.addEventListener('click', () => showView(button.dataset.openView)));
   $('camera-filter').addEventListener('change', renderFilteredPhotos);
   $('label-filter').addEventListener('change', renderFilteredPhotos);
+  document.querySelectorAll('[data-review-queue]').forEach(button => button.addEventListener('click', () => {
+    activeReviewQueue = button.dataset.reviewQueue;
+    mergeReviewQueue(photos.filter(belongsToActiveQueue), false);
+    renderReview(true);
+  }));
   const requestedView = location.hash.slice(1);
   showView(requestedView || 'overview');
   const results = await Promise.allSettled([refreshStatus(), fetchLibrary()]);
