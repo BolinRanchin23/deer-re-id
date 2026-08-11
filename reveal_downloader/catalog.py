@@ -93,21 +93,18 @@ class SupabaseCatalog:
 
 def handle_library(
     environ: Mapping[str, str],
-    authenticated: bool,
     *,
     catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
     now: Optional[float] = None,
     epoch_now: Optional[int] = None,
 ) -> Tuple[int, Dict[str, Any]]:
-    """Return the exact-location library only to an explicitly authorized caller."""
+    """Return the open-prototype catalog through the server-side service key."""
     signing_key = _signing_key(environ)
     current = int(time.time()) if epoch_now is None else int(epoch_now)
     url = environ.get("SUPABASE_URL", "")
     key = environ.get("SUPABASE_SECRET_KEY", "")
     if signing_key is None or not url or not key:
         return 404, {"ok": False, "error": "not found"}
-    if not authenticated:
-        return 401, {"ok": False, "error": "unauthorized"}
     clock = (lambda: now) if now is not None else time.monotonic
     try:
         catalog = catalog_factory(

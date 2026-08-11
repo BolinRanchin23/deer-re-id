@@ -2,212 +2,269 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
-  <title>DeerID Operations</title>
+  <title>DeerID Workspace</title>
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
   <style>
     :root {
-      --bg: #0f1110;
-      --surface: #151816;
-      --surface-2: #1a1e1b;
-      --border: #2a2f2b;
-      --border-strong: #3a423c;
-      --text: #f3f5f3;
-      --muted: #919a93;
-      --green: #3ecf8e;
-      --green-soft: rgba(62, 207, 142, .11);
-      --amber: #e8b55b;
-      --red: #ee7777;
-      --radius: 14px;
+      --ink: #f4f2ec;
+      --muted: #9d9e97;
+      --faint: #72756f;
+      --bg: #0c0e0d;
+      --panel: #141715;
+      --panel-2: #1a1e1b;
+      --line: #292e2a;
+      --line-strong: #3b433c;
+      --moss: #82b889;
+      --moss-bright: #a3d5a8;
+      --moss-wash: rgba(130,184,137,.13);
+      --amber: #dcb56d;
+      --red: #dd7c72;
+      --radius: 16px;
+      --sidebar: 224px;
     }
     * { box-sizing: border-box; }
+    html { background: var(--bg); }
     body {
       margin: 0;
       min-height: 100vh;
-      background:
-        radial-gradient(circle at 50% -20%, rgba(62,207,142,.09), transparent 34rem),
-        var(--bg);
-      color: var(--text);
-      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
       font-size: 15px;
       line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }
-    .shell { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
-    header {
-      position: sticky; top: 0; z-index: 10;
-      border-bottom: 1px solid rgba(42,47,43,.8);
-      background: rgba(15,17,16,.82);
-      backdrop-filter: blur(18px);
+    button, select, input { font: inherit; }
+    button { color: inherit; }
+    [hidden] { display: none !important; }
+    .app-header {
+      position: fixed; inset: 0 0 auto 0; z-index: 1000;
+      height: 64px; border-bottom: 1px solid var(--line);
+      background: rgba(12,14,13,.92); backdrop-filter: blur(18px);
     }
-    nav { height: 66px; display: flex; align-items: center; justify-content: space-between; }
-    .brand { display: flex; align-items: center; gap: 11px; font-weight: 600; letter-spacing: -.02em; }
-    .mark { width: 27px; height: 27px; color: var(--green); }
-    .nav-meta { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
-    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 4px rgba(145,154,147,.08); }
-    .pulse.healthy { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+    .header-inner { height: 100%; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 650; letter-spacing: -.025em; }
+    .brand-mark { width: 29px; height: 29px; color: var(--moss-bright); }
+    .prototype-badge { margin-left: 6px; padding: 3px 7px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--muted); font: 600 9px/1.3 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .service-state { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; }
+    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); box-shadow: 0 0 0 4px rgba(114,117,111,.1); }
+    .pulse.healthy { background: var(--moss-bright); box-shadow: 0 0 0 4px var(--moss-wash); }
     .pulse.degraded { background: var(--amber); }
     .pulse.error { background: var(--red); }
-    main { padding: 64px 0 80px; }
-    .eyebrow { margin: 0 0 14px; color: var(--green); font: 500 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; }
-    h1 { margin: 0; max-width: 760px; font-size: clamp(38px, 6vw, 66px); font-weight: 450; line-height: 1.02; letter-spacing: -.055em; }
-    .lede { max-width: 660px; margin: 22px 0 0; color: var(--muted); font-size: 17px; }
-    .updated { margin-top: 22px; color: #c2c8c3; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .grid { display: grid; gap: 14px; }
-    .metrics { grid-template-columns: repeat(4, 1fr); margin-top: 46px; }
-    .card { border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(145deg, rgba(26,30,27,.94), rgba(21,24,22,.94)); }
-    .metric { min-height: 132px; padding: 19px; }
-    .metric-label { color: var(--muted); font-size: 12px; }
-    .metric-value { margin-top: 12px; font-size: 31px; line-height: 1; letter-spacing: -.04em; }
-    .metric-detail { margin-top: 13px; color: #b7beb8; font-size: 12px; }
-    .section { margin-top: 52px; }
-    .section-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 16px; }
-    h2 { margin: 0; font-size: 21px; font-weight: 500; letter-spacing: -.025em; }
-    .section-copy { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-    .integrity { grid-template-columns: repeat(3, 1fr); }
-    .integrity-card { padding: 20px; display: flex; align-items: center; justify-content: space-between; }
-    .integrity-name { display: flex; align-items: center; gap: 11px; }
-    .check { width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--muted); background: rgba(145,154,147,.05); font-size: 13px; }
-    .check.verified { border-color: rgba(62,207,142,.28); color: var(--green); background: var(--green-soft); }
-    .integrity-count { color: var(--green); font: 500 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .table-card { overflow: hidden; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
-    th { color: var(--muted); font-weight: 400; background: rgba(15,17,16,.35); }
+    .app-body { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); padding-top: 64px; min-height: 100vh; }
+    .sidebar {
+      position: fixed; top: 64px; bottom: 0; left: 0; width: var(--sidebar);
+      padding: 24px 14px; border-right: 1px solid var(--line); background: #101210;
+    }
+    .side-label { padding: 0 12px 9px; color: var(--faint); font: 600 9px/1.3 ui-monospace, monospace; letter-spacing: .13em; text-transform: uppercase; }
+    .nav-list { display: grid; gap: 4px; }
+    .nav-button {
+      min-height: 44px; width: 100%; padding: 10px 12px; display: flex; align-items: center; gap: 11px;
+      border: 0; border-radius: 10px; color: var(--muted); background: transparent; cursor: pointer; text-align: left;
+    }
+    .nav-button:hover { color: var(--ink); background: var(--panel); }
+    .nav-button.active { color: var(--ink); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
+    .nav-button svg { width: 18px; height: 18px; flex: 0 0 auto; }
+    .nav-button .count { margin-left: auto; min-width: 21px; padding: 2px 6px; border-radius: 99px; color: var(--faint); background: #0d0f0e; font-size: 10px; text-align: center; }
+    .sidebar-foot { position: absolute; left: 26px; right: 22px; bottom: 24px; color: var(--faint); font-size: 11px; }
+    .workspace { grid-column: 2; width: min(1380px, 100%); margin: 0 auto; padding: 34px 36px 72px; }
+    .view { animation: reveal .2s ease-out; }
+    @keyframes reveal { from { opacity: .45; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+    .view-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+    .eyebrow { margin: 0 0 7px; color: var(--moss-bright); font: 600 10px/1.2 ui-monospace, monospace; letter-spacing: .13em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 0; font-size: clamp(30px, 4vw, 48px); font-weight: 520; line-height: 1.04; letter-spacing: -.045em; }
+    h2 { margin-bottom: 0; font-size: 20px; font-weight: 580; letter-spacing: -.025em; }
+    h3 { margin-bottom: 4px; font-size: 15px; font-weight: 600; }
+    .view-copy, .section-copy { color: var(--muted); }
+    .view-copy { max-width: 620px; margin: 10px 0 0; font-size: 14px; }
+    .section-copy { margin: 5px 0 0; font-size: 12px; }
+    .updated { color: var(--faint); font: 11px/1.4 ui-monospace, monospace; white-space: nowrap; }
+    .section { margin-top: 34px; }
+    .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+    .card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .metric { min-height: 116px; padding: 18px; }
+    .metric-label { color: var(--muted); font-size: 11px; }
+    .metric-value { margin-top: 13px; font-size: 29px; line-height: 1; letter-spacing: -.04em; }
+    .metric-detail { margin-top: 11px; color: var(--faint); font-size: 11px; }
+    .photo-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .photo-card { overflow: hidden; min-width: 0; cursor: pointer; transition: border-color .16s ease, transform .16s ease; }
+    .photo-card:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+    .photo-card img { width: 100%; aspect-ratio: 16/10; display: block; object-fit: cover; background: #090a09; }
+    .photo-meta { padding: 12px 13px 13px; }
+    .photo-meta strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+    .photo-date { margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+    .chip { padding: 3px 7px; border: 1px solid var(--line-strong); border-radius: 999px; color: #c1c5c0; font-size: 9px; }
+    .chip.review { color: var(--amber); border-color: rgba(220,181,109,.35); background: rgba(220,181,109,.08); }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+    .control { min-height: 44px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--panel); }
+    select.control { min-width: 160px; }
+    button.control { cursor: pointer; }
+    button.control.active { color: #0c140e; border-color: var(--moss); background: var(--moss-bright); font-weight: 650; }
+    .map { min-height: 570px; overflow: hidden; background: #111511; }
+    .map-placeholder { min-height: 570px; display: grid; place-items: center; padding: 30px; text-align: center; color: var(--muted); }
+    .leaflet-container { font-family: inherit; background: #101411; }
+    .leaflet-popup-content-wrapper, .leaflet-popup-tip { color: var(--ink); background: var(--panel-2); }
+    .leaflet-popup-content { margin: 12px 14px; }
+    .leaflet-control-attribution { font-size: 9px; }
+    .camera-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+    .camera-card { padding: 16px; }
+    .camera-card strong, .camera-card span { display: block; }
+    .camera-card span { margin-top: 5px; color: var(--muted); font-size: 11px; }
+    .empty { min-height: 210px; display: grid; place-items: center; padding: 32px; text-align: center; color: var(--muted); }
+    .empty-inner { max-width: 430px; }
+    .empty strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 16px; font-weight: 580; }
+    .review-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .review-card .photo-meta { display: grid; gap: 9px; }
+    .review-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .review-actions button { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: var(--panel-2); cursor: pointer; font-size: 11px; }
+    .review-actions button:hover { color: var(--ink); border-color: var(--line-strong); }
+    .deer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .deer-card { overflow: hidden; }
+    .deer-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+    .deer-card .photo-meta { min-height: 88px; }
+    .integrity { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .integrity-card { padding: 16px; display: flex; align-items: center; justify-content: space-between; }
+    .integrity-name { display: flex; align-items: center; gap: 9px; }
+    .check { width: 25px; height: 25px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--faint); }
+    .check.verified { color: var(--moss-bright); border-color: rgba(130,184,137,.35); background: var(--moss-wash); }
+    .integrity-count { color: var(--moss-bright); font: 600 16px/1 ui-monospace, monospace; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; min-width: 620px; border-collapse: collapse; }
+    th, td { padding: 13px 16px; border-bottom: 1px solid var(--line); text-align: left; font-size: 12px; }
+    th { color: var(--faint); font-weight: 500; background: #111311; }
     tbody tr:last-child td { border-bottom: 0; }
-    .status-pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: 999px; text-transform: capitalize; }
-    .status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-    .status-pill.healthy::before { background: var(--green); }
+    .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--line-strong); border-radius: 99px; text-transform: capitalize; }
+    .status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+    .status-pill.healthy::before { background: var(--moss-bright); }
     .status-pill.degraded::before { background: var(--amber); }
     .status-pill.error::before { background: var(--red); }
-    .photos { grid-template-columns: repeat(5, 1fr); }
-    .photo { aspect-ratio: 4/3; overflow: hidden; position: relative; }
-    .photo img { width: 100%; height: 100%; display: block; object-fit: cover; }
-    .photo time { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 5px 7px; border-radius: 6px; color: white; background: rgba(0,0,0,.65); font-size: 10px; }
-    .empty { padding: 38px 24px; text-align: center; color: var(--muted); }
-    .empty strong { display: block; margin-bottom: 5px; color: #d3d8d4; font-weight: 500; }
-    .privacy { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
-    .privacy svg { width: 14px; height: 14px; }
-    .private-panel { padding: 22px; }
-    .unlock { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
-    .unlock label { min-width: 220px; flex: 1; display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
-    .unlock input { width: 100%; min-height: 44px; padding: 11px 13px; border: 1px solid var(--border-strong); border-radius: 9px; color: var(--text); background: #0f1110; font: inherit; }
-    .unlock input:focus { outline: 2px solid rgba(62,207,142,.45); outline-offset: 1px; }
-    button { min-height: 44px; padding: 11px 15px; border: 1px solid rgba(62,207,142,.35); border-radius: 9px; color: #07130e; background: var(--green); font: 600 13px/1 inherit; cursor: pointer; }
-    button:disabled { opacity: .55; cursor: wait; }
-    .auth-form[hidden] { display: none; }
-    button.secondary { color: var(--muted); border-color: var(--border-strong); background: transparent; }
-    .library-shell[hidden] { display: none; }
-    .library-nav { display: flex; gap: 8px; margin-bottom: 16px; }
-    .library-nav button { color: var(--muted); border-color: var(--border); background: var(--surface-2); }
-    .library-nav button.active { color: #07130e; border-color: var(--green); background: var(--green); }
-    .map { min-height: 440px; overflow: hidden; border-radius: var(--radius); background: linear-gradient(135deg,#18241d,#101411); }
-    .map-placeholder { min-height: 440px; display: grid; place-items: center; padding: 30px; text-align: center; color: var(--muted); }
-    .leaflet-container { font-family: inherit; background: #101411; }
-    .leaflet-popup-content-wrapper, .leaflet-popup-tip { color: var(--text); background: var(--surface-2); }
-    .leaflet-popup-content { margin: 12px 14px; }
-    .leaflet-control-attribution { font-size: 10px; }
-    .camera-list { grid-template-columns: repeat(4, 1fr); margin-top: 14px; }
-    .camera-card { padding: 16px; }
-    .camera-card strong { display: block; font-weight: 500; }
-    .camera-card span { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
-    .library-photos { grid-template-columns: repeat(4, 1fr); }
-    .library-photo { overflow: hidden; }
-    .library-photo img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
-    .library-photo-meta { padding: 12px; }
-    .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-    .chip { padding: 3px 7px; border: 1px solid var(--border-strong); border-radius: 99px; color: #bdc5bf; font-size: 10px; }
-    .error-banner { display: none; margin-top: 28px; padding: 13px 16px; border: 1px solid rgba(238,119,119,.28); border-radius: 10px; color: #f1b0b0; background: rgba(238,119,119,.08); }
-    footer { padding: 22px 0 40px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
-    @media (max-width: 780px) {
-      .shell { width: min(100% - 26px, 1160px); }
-      main { padding-top: 44px; }
-      .metrics { grid-template-columns: repeat(2, 1fr); }
-      .integrity { grid-template-columns: 1fr; }
-      .photos { grid-template-columns: repeat(2, 1fr); }
-      .library-photos, .camera-list { grid-template-columns: repeat(2, 1fr); }
-      .table-card { overflow-x: auto; }
-      table { min-width: 630px; }
+    .error-banner { display: none; margin-bottom: 18px; padding: 12px 14px; border: 1px solid rgba(221,124,114,.32); border-radius: 10px; color: #efb3ad; background: rgba(221,124,114,.08); }
+    .loading-line { height: 3px; position: fixed; top: 64px; left: var(--sidebar); right: 0; z-index: 999; overflow: hidden; background: transparent; }
+    .loading-line::after { content: ""; display: block; width: 35%; height: 100%; background: var(--moss-bright); animation: loading 1s ease-in-out infinite; }
+    @keyframes loading { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
+    .loading-line.done { display: none; }
+    .bottom-nav { display: none; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+    @media (max-width: 1050px) {
+      .photo-grid { grid-template-columns: repeat(3, 1fr); }
+      .review-grid, .deer-grid { grid-template-columns: repeat(2, 1fr); }
+      .camera-list { grid-template-columns: repeat(2, 1fr); }
     }
-    @media (max-width: 440px) {
-      .metrics { grid-template-columns: 1fr; }
-      .nav-meta span:last-child { display: none; }
-      .unlock, .unlock label, .unlock button { width: 100%; }
-      .library-nav { position: sticky; top: 74px; z-index: 5; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: rgba(15,17,16,.92); }
-      .map, .map-placeholder { min-height: 58vh; }
+    @media (max-width: 780px) {
+      :root { --sidebar: 0px; }
+      .prototype-badge, .service-state span { display: none; }
+      .header-inner { padding: 0 16px; }
+      .app-body { display: block; }
+      .sidebar { display: none; }
+      .workspace { padding: 25px 14px calc(94px + env(safe-area-inset-bottom)); }
+      .view-head { display: block; margin-bottom: 20px; }
+      .updated { margin-top: 10px; white-space: normal; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+      .review-grid, .deer-grid { grid-template-columns: 1fr; }
+      .camera-list { grid-template-columns: repeat(2, 1fr); }
+      .map, .map-placeholder { min-height: 60vh; }
+      .integrity { grid-template-columns: 1fr; }
+      .bottom-nav {
+        position: fixed; z-index: 1001; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr);
+        padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgba(12,14,13,.96); backdrop-filter: blur(18px);
+      }
+      .bottom-nav .nav-button { min-height: 52px; padding: 5px 2px; display: grid; place-items: center; gap: 1px; font-size: 9px; text-align: center; }
+      .bottom-nav .nav-button svg { width: 19px; height: 19px; }
+      .bottom-nav .count { display: none; }
+    }
+    @media (max-width: 430px) {
+      h1 { font-size: 34px; }
+      .metric { min-height: 100px; padding: 15px; }
+      .metric-value { font-size: 25px; }
+      .section-head { align-items: flex-start; flex-direction: column; }
+      .toolbar, .toolbar .control { width: 100%; }
+      .photo-meta { padding: 10px; }
+      .camera-list { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <header>
-    <nav class="shell">
+  <header class="app-header">
+    <div class="header-inner">
       <div class="brand">
-        <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M8 4c3 3 4 6 4 10M24 4c-3 3-4 6-4 10M5 8l5 3M27 8l-5 3M10 15c1-3 11-3 12 0 2 6-1 12-6 14-5-2-8-8-6-14Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13" cy="18" r="1" fill="currentColor"/><circle cx="19" cy="18" r="1" fill="currentColor"/></svg>
-        <span>DeerID Operations</span>
+        <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M8 4c3 3 4 6 4 10M24 4c-3 3-4 6-4 10M5 8l5 3M27 8l-5 3M10 15c1-3 11-3 12 0 2 6-1 12-6 14-5-2-8-8-6-14Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13" cy="18" r="1" fill="currentColor"/><circle cx="19" cy="18" r="1" fill="currentColor"/></svg>
+        <span>DeerID</span><span class="prototype-badge">Field prototype</span>
       </div>
-      <div class="nav-meta"><i id="nav-dot" class="pulse"></i><span id="nav-status">Checking service</span></div>
-    </nav>
+      <div class="service-state"><i id="nav-dot" class="pulse"></i><span id="nav-status">Connecting to archive</span></div>
+    </div>
   </header>
-  <main class="shell">
-    <p class="eyebrow">Private archive telemetry</p>
-    <h1>Reveal ingestion, from cloud to private archive.</h1>
-    <p class="lede">A privacy-preserving view of synchronization health and archive integrity. No credentials, camera locations, or storage paths are exposed here.</p>
-    <div id="updated" class="updated">Fetching durable status…</div>
-    <div id="error" class="error-banner" role="alert"></div>
+  <div id="loading-line" class="loading-line"></div>
+  <div class="app-body">
+    <aside class="sidebar" aria-label="Workspace navigation">
+      <div class="side-label">Workspace</div>
+      <nav class="nav-list">
+        <button class="nav-button active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Overview</span></button>
+        <button class="nav-button" data-view="review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h14v16H5zM8 9l2 2 5-5M8 15h8"/></svg><span>Review</span><span id="review-nav-count" class="count">0</span></button>
+        <button class="nav-button" data-view="deer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 3c2 2 3 4 3 7M17 3c-2 2-3 4-3 7M5 6l4 2M19 6l-4 2M8 11c1-2 7-2 8 0 1 5-1 8-4 10-3-2-5-5-4-10Z"/></svg><span>Deer</span><span id="deer-nav-count" class="count">0</span></button>
+        <button class="nav-button" data-view="cameras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16v11H4zM8 8l2-3h4l2 3M12 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg><span>Cameras</span><span id="camera-nav-count" class="count">0</span></button>
+        <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span><span id="photo-nav-count" class="count">0</span></button>
+      </nav>
+      <div class="sidebar-foot">Cloud thumbnails · immutable archive<br>Manual production sync</div>
+    </aside>
 
-    <section class="grid metrics" aria-label="Latest synchronization metrics">
-      <article class="card metric"><div class="metric-label">System health</div><div id="health" class="metric-value">—</div><div id="health-detail" class="metric-detail">Awaiting status</div></article>
-      <article class="card metric"><div class="metric-label">Downloaded</div><div id="downloaded" class="metric-value">—</div><div class="metric-detail">New archive units</div></article>
-      <article class="card metric"><div class="metric-label">Already verified</div><div id="skipped" class="metric-value">—</div><div class="metric-detail">Integrity checks passed</div></article>
-      <article class="card metric"><div class="metric-label">Failed</div><div id="failed" class="metric-value">—</div><div class="metric-detail">Latest bounded run</div></article>
-    </section>
+    <main id="workspace-shell" class="workspace">
+      <div id="error" class="error-banner" role="alert"></div>
 
-    <section class="section">
-      <div class="section-head"><div><h2>Photo archive integrity</h2><p class="section-copy">Each complete archive unit requires all three private objects.</p></div></div>
-      <div class="grid integrity">
-        <article class="card integrity-card"><div class="integrity-name"><span id="image-check" class="check">·</span><span>Photo image</span></div><strong id="images" class="integrity-count">—</strong></article>
-        <article class="card integrity-card"><div class="integrity-name"><span id="metadata-check" class="check">·</span><span>Metadata JSON</span></div><strong id="metadata" class="integrity-count">—</strong></article>
-        <article class="card integrity-card"><div class="integrity-name"><span id="checksum-check" class="check">·</span><span>SHA-256 checksum</span></div><strong id="checksums" class="integrity-count">—</strong></article>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-head"><div><h2>Recent runs</h2><p class="section-copy">The latest 20 synchronization outcomes stored durably in private Storage.</p></div></div>
-      <div class="card table-card"><table><thead><tr><th>Completed</th><th>Status</th><th>Downloaded</th><th>Verified</th><th>Failed</th></tr></thead><tbody id="runs"><tr><td colspan="5" class="empty">Loading run history…</td></tr></tbody></table></div>
-    </section>
-
-    <section class="section" id="private-library">
-      <div class="section-head"><div><h2>Private photo library</h2><p class="section-copy">Browse verified photos, camera health, and exact deployment locations with your DeerID account.</p></div><div class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span>Exact locations protected</span></div></div>
-      <div id="library-lock" class="card private-panel">
-        <form id="library-auth" class="unlock auth-form">
-          <label>Email<input id="library-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" required></label>
-          <label>Password<input id="library-password" type="password" autocomplete="current-password" placeholder="At least 8 characters" minlength="8" required></label>
-          <button type="submit">Sign in</button>
-          <button id="recover-password" type="button" class="secondary">Forgot password?</button>
-        </form>
-        <form id="password-setup" class="unlock auth-form" hidden>
-          <label>New password<input id="new-password" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters" required></label>
-          <button type="submit">Set password</button>
-        </form>
-        <p id="library-message" class="section-copy" role="status">Sign in to view private photos and exact camera locations. Your session is stored only in secure HttpOnly cookies.</p>
-      </div>
-      <div id="library-shell" class="library-shell" hidden>
-        <div class="library-nav" aria-label="Private library views">
-          <button id="show-library" class="active" type="button">Photos</button>
-          <button id="show-map" type="button">Camera map</button>
-          <button id="lock-library" class="secondary" type="button">Sign out</button>
+      <section id="view-overview" class="view" data-view-panel="overview">
+        <div class="view-head"><div><p class="eyebrow">Ranch workspace</p><h1>What happened in the field?</h1><p class="view-copy">A single view of recent captures, cameras, and the immutable archive behind them.</p></div><div id="updated" class="updated">Loading field data…</div></div>
+        <div class="metrics">
+          <article class="card metric"><div class="metric-label">Photos cataloged</div><div id="catalog-count" class="metric-value">—</div><div class="metric-detail">Verified cloud captures</div></article>
+          <article class="card metric"><div class="metric-label">Needs review</div><div id="review-count" class="metric-value">—</div><div class="metric-detail">No confirmed label yet</div></article>
+          <article class="card metric"><div class="metric-label">Cameras reporting</div><div id="camera-count" class="metric-value">—</div><div class="metric-detail">Latest mapped cameras</div></article>
+          <article class="card metric"><div class="metric-label">Archive health</div><div id="health" class="metric-value">—</div><div id="health-detail" class="metric-detail">Reading durable status</div></article>
         </div>
-        <div id="library-view"><div class="card empty"><strong>Loading photo catalog</strong>Reading verified media metadata.</div></div>
-        <div id="map-view" hidden>
-          <div class="section-head"><div><h2>Camera map</h2><p class="section-copy">Satellite view with the latest provider-reported camera locations.</p></div><span class="chip">Satellite</span></div>
-          <div id="camera-map" class="card map"><div class="map-placeholder"><div><strong>Loading map</strong><br>Exact coordinates are available only after authorization.</div></div></div>
-          <div id="camera-list" class="grid camera-list"></div>
-        </div>
-      </div>
-    </section>
-  </main>
-  <footer><div class="shell">DeerID · Private archive telemetry · Refreshes every 30 seconds</div></footer>
+        <section class="section"><div class="section-head"><div><h2>Latest from the ranch</h2><p class="section-copy">Newest archived thumbnails, before HD is requested.</p></div><button class="control" data-open-view="photos">View all photos</button></div><div id="recent-photos" class="photo-grid"><div class="card empty"><div class="empty-inner">Loading recent captures…</div></div></div></section>
+        <section class="section"><div class="section-head"><div><h2>Archive integrity</h2><p class="section-copy">A capture is complete only when all three private objects verify.</p></div></div><div class="integrity">
+          <article class="card integrity-card"><div class="integrity-name"><span id="image-check" class="check">·</span><span>Photo image</span></div><strong id="images" class="integrity-count">—</strong></article>
+          <article class="card integrity-card"><div class="integrity-name"><span id="metadata-check" class="check">·</span><span>Metadata JSON</span></div><strong id="metadata" class="integrity-count">—</strong></article>
+          <article class="card integrity-card"><div class="integrity-name"><span id="checksum-check" class="check">·</span><span>SHA-256 marker</span></div><strong id="checksums" class="integrity-count">—</strong></article>
+        </div></section>
+        <section class="section"><div class="section-head"><div><h2>Recent ingestion runs</h2><p class="section-copy">Durable outcomes from manually triggered synchronization.</p></div></div><div class="card table-wrap"><table><thead><tr><th>Completed</th><th>Status</th><th>Downloaded</th><th>Verified</th><th>Failed</th></tr></thead><tbody id="runs"><tr><td colspan="5">Loading run history…</td></tr></tbody></table></div></section>
+      </section>
+
+      <section id="view-review" class="view" data-view-panel="review" hidden>
+        <div class="view-head"><div><p class="eyebrow">Human review</p><h1>Worth a closer look?</h1><p class="view-copy">Triage low-cost cloud thumbnails before requesting HD media or assigning an identity.</p></div><div id="review-summary" class="updated">Loading queue…</div></div>
+        <div id="review-grid" class="review-grid"></div>
+      </section>
+
+      <section id="view-deer" class="view" data-view-panel="deer" hidden>
+        <div class="view-head"><div><p class="eyebrow">Identity workspace</p><h1>Deer profiles</h1><p class="view-copy">Season-scoped identities built from human-confirmed photos—not automatic guesses.</p></div><div id="deer-summary" class="updated">Loading profiles…</div></div>
+        <div id="deer-grid" class="deer-grid"></div>
+      </section>
+
+      <section id="view-cameras" class="view" data-view-panel="cameras" hidden>
+        <div class="view-head"><div><p class="eyebrow">Camera network</p><h1>Where the cameras are watching</h1><p class="view-copy">Latest provider-reported positions on satellite imagery, with field telemetry.</p></div><span class="chip">Satellite</span></div>
+        <div id="camera-map" class="card map"><div class="map-placeholder"><div><strong>Loading camera map</strong><br>Reading cataloged coordinates.</div></div></div>
+        <div id="camera-list" class="camera-list"></div>
+      </section>
+
+      <section id="view-photos" class="view" data-view-panel="photos" hidden>
+        <div class="view-head"><div><p class="eyebrow">Photo archive</p><h1>Every verified capture</h1><p class="view-copy">Browse inexpensive cloud thumbnails first; preserve originals and richer variants separately.</p></div></div>
+        <div class="section-head"><div id="photo-summary" class="section-copy">Loading catalog…</div><div class="toolbar"><select id="camera-filter" class="control" aria-label="Filter by camera"><option value="">All cameras</option></select><select id="label-filter" class="control" aria-label="Filter by review status"><option value="">All photos</option><option value="review">Needs review</option><option value="labeled">Labeled</option></select></div></div>
+        <div id="library-view" class="photo-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="bottom-nav" aria-label="Mobile workspace navigation">
+    <button class="nav-button active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Overview</span></button>
+    <button class="nav-button" data-view="review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h14v16H5zM8 9l2 2 5-5M8 15h8"/></svg><span>Review</span></button>
+    <button class="nav-button" data-view="deer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 3c2 2 3 4 3 7M17 3c-2 2-3 4-3 7M5 6l4 2M19 6l-4 2M8 11c1-2 7-2 8 0 1 5-1 8-4 10-3-2-5-5-4-10Z"/></svg><span>Deer</span></button>
+    <button class="nav-button" data-view="cameras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16v11H4zM8 8l2-3h4l2 3M12 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg><span>Cameras</span></button>
+    <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
+  </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js" defer></script>
+  <script src="/app.js?v=2" defer></script>
 </body>
 </html>

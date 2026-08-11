@@ -14,17 +14,16 @@ supabase db push
 Then set these Vercel production variables:
 
 - `SUPABASE_CATALOG_ENABLED=true`
-- `AUTH_ALLOWED_EMAILS=<comma-separated private-library account emails>`
-- `SUPABASE_PUBLISHABLE_KEY=<the project's browser-safe publishable key>`
 - `LIBRARY_PREVIEW_SECRET=<an independent high-entropy signing secret>`
 - `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=<a URL-restricted public Mapbox token>`
-- `PUBLIC_SITE_URL=https://deer-re-id.vercel.app`
 
-The browser submits email/password to the same-origin `/api/auth` route. Supabase access and
-refresh tokens are returned only as `HttpOnly; Secure; SameSite=Lax` cookies. Private library,
-camera-map, and preview routes validate that Supabase session before using the server-side
-service key. The Mapbox public token and exact camera coordinates are returned only after
-authentication; satellite tile requests necessarily disclose the viewed coordinates to Mapbox.
+During the active prototype phase, the workspace is intentionally open and does not use Supabase
+Auth. The browser reads `/api/library`; that serverless route uses the Supabase service key only on
+the server. Permanent Storage object paths remain private. Photo cards receive five-minute opaque
+preview tokens, and `/api/library_preview` resolves those tokens server-side before reading the
+private bucket. Exact camera coordinates and the public Mapbox browser token are therefore visible
+to anyone who opens this prototype. Satellite tile requests also disclose viewed coordinates to
+Mapbox. Reintroduce an authorization layer before treating the workspace as a hardened deployment.
 
 Do not enable the catalog flag before the migration succeeds. Scheduling is intentionally unchanged.
 

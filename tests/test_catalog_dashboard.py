@@ -74,21 +74,13 @@ class PrivateLibraryTests(unittest.TestCase):
             "NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN": "pk.mapbox-browser-token",
         }
 
-    def test_library_fails_closed_without_configured_or_authenticated_user(self):
-        self.assertEqual(handle_library({}, False)[0], 404)
-        status, payload = handle_library(
-            self.environment(),
-            False,
-            catalog_factory=lambda *_: self.fail("catalog must not be created"),
-        )
-        self.assertEqual(status, 401)
-        self.assertEqual(payload, {"ok": False, "error": "unauthorized"})
+    def test_open_prototype_library_still_requires_server_configuration(self):
+        self.assertEqual(handle_library({})[0], 404)
 
-    def test_authorized_library_returns_photos_map_and_opaque_preview_urls(self):
+    def test_open_prototype_library_returns_photos_map_and_opaque_preview_urls(self):
         catalog = MemoryCatalog()
         status, payload = handle_library(
             self.environment(),
-            True,
             catalog_factory=lambda *_: catalog,
             epoch_now=1_786_200_000,
         )
@@ -107,7 +99,6 @@ class PrivateLibraryTests(unittest.TestCase):
         catalog = MemoryCatalog()
         _, payload = handle_library(
             self.environment(),
-            True,
             catalog_factory=lambda *_: catalog,
             epoch_now=1_786_200_000,
         )
