@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -134,7 +135,25 @@ class Gate1WorkerTests(unittest.TestCase):
         with patch.object(gate1_worker, "SupabaseCatalog", FakeCatalog), patch.object(gate1_worker.subprocess, "run", fake_run):
             gate1_worker.run_worker(env, limit=1, deadline=120.0, clock=lambda: 20.0)
 
-        self.assertEqual(observed_timeout, 100.0)
+        self.assertEqual(observed_timeout, 70.0)
+
+    def test_worker_releases_claim_if_model_hits_the_recording_reserve(self):
+        catalog = FakeCatalog("url", "key", "bucket")
+
+        def fake_run(*_args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="speciesnet", timeout=kwargs["timeout"])
+
+        with patch.object(gate1_worker, "SupabaseCatalog", lambda *_args: catalog), patch.object(
+            gate1_worker.subprocess, "run", side_effect=fake_run
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                gate1_worker.run_worker(
+                    {"SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key"},
+                    deadline=100.0,
+                    clock=lambda: 0.0,
+                )
+
+        self.assertEqual(catalog.released_claim, "33333333-3333-4333-8333-333333333333")
 
     def test_catchup_stops_cleanly_when_an_inflight_batch_reaches_deadline(self):
         def timed_out_batch(_environ, **_kwargs):

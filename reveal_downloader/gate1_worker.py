@@ -16,6 +16,7 @@ from .gate1 import route_events
 MODEL_NAME = "SpeciesNet"
 MODEL_VERSION = "4.0.3a"
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
+RECORDING_RESERVE_SECONDS = 30.0
 SPECIESNET_ENV_ALLOWLIST = {
     "HOME", "KAGGLEHUB_CACHE", "LANG", "LC_ALL", "PATH",
     "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "TMP", "TEMP", "TMPDIR",
@@ -115,10 +116,19 @@ def run_worker(
             if key in SPECIESNET_ENV_ALLOWLIST
         }
         remaining = None if deadline is None else deadline - clock()
-        if remaining is not None and remaining <= 1.0:
+        if remaining is not None and remaining <= RECORDING_RESERVE_SECONDS:
+            catalog.release_gate1_claim(claim_token)
             raise subprocess.TimeoutExpired(command, max(0.0, remaining))
-        timeout = 900.0 if remaining is None else min(900.0, remaining)
-        completed = subprocess.run(command, env=child_env, text=True, capture_output=True, timeout=timeout)
+        timeout = 900.0 if remaining is None else min(
+            900.0, remaining - RECORDING_RESERVE_SECONDS
+        )
+        try:
+            completed = subprocess.run(
+                command, env=child_env, text=True, capture_output=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            catalog.release_gate1_claim(claim_token)
+            raise
         if completed.returncode:
             raise RuntimeError(f"SpeciesNet failed with exit code {completed.returncode}")
         model_output = json.loads(output_path.read_text())
