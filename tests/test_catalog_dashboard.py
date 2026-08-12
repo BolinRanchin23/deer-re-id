@@ -27,12 +27,14 @@ class MemoryCatalog:
         self.profile_attached = None
         self.operational_stats = None
         self.automation_labeled = None
+        self.library_limits = []
 
     def set_deadline(self, deadline, clock=None):
         self.deadline = deadline
         self.clock = clock
 
     def read_library(self, limit=60):
+        self.library_limits.append(limit)
         return [
             {
                 "id": "11111111-1111-4111-8111-111111111111",
@@ -274,6 +276,7 @@ class PrivateLibraryTests(unittest.TestCase):
         )
 
         self.assertEqual(status, 200)
+        self.assertEqual(catalog.library_limits, [50])
         self.assertTrue(payload["ok"])
         self.assertEqual(len(payload["photos"]), 1)
         self.assertEqual(len(payload["cameras"]), 1)
@@ -684,7 +687,7 @@ class Gate1ReviewUiTests(unittest.TestCase):
         ):
             self.assertIn(f'id="{element_id}"', html)
             self.assertIn(element_id, script)
-        self.assertIn("Most recent 60 shown", html)
+        self.assertIn("Most recent 50 shown", html)
 
     def test_gate1b_ui_keeps_only_uncertain_in_primary_review_and_adds_audit_workspaces(self):
         html = Path("public/index.html").read_text()
