@@ -185,7 +185,7 @@ class MemoryCatalog:
 
     def resolve_media_asset_object(self, media_asset_id):
         self.resolved_asset = media_asset_id
-        return {"object_path": "cam@" + "a" * 64 + "/2026/08/08/20260808T120000Z_12345678-1234-4123-8123-123456789abc-cloud-hd@" + "c" * 64 + "_hd.jpg", "content_type": "image/jpeg"}
+        return {"object_path": "cam@" + "a" * 64 + "/2026/08/08/20260808T120000Z_123456789012345-123-4-12345678901234-ab-cdef12345.jpg@" + "c" * 64 + "_hd.jpg", "content_type": "image/jpeg"}
 
     def read_private_image(self, object_path, max_bytes):
         self.read_args = (object_path, max_bytes)
