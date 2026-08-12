@@ -343,7 +343,7 @@ def handle_library(
         gate1b = _sanitize_gate1b_metrics(catalog.read_gate1b_metrics())
         stats = _sanitize_operational_stats(catalog.read_operational_stats())
         automation_audit = _sanitize_auxiliary_media_rows(catalog.read_automation_audit(120), signing_key, current, "automation_event_id")
-        hd_review_queue = _sanitize_auxiliary_media_rows(catalog.read_hd_review_queue(60), signing_key, current, "hd_review_result_id")
+        hd_review_queue = _sanitize_auxiliary_media_rows(catalog.read_hd_review_queue(30), signing_key, current, "hd_review_result_id")
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
         return 503, {"ok": False, "error": "library unavailable"}
     payload: Dict[str, Any] = {
