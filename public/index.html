@@ -130,8 +130,8 @@
     .review-stage { position: relative; width: min(920px, 100%); margin: 0 auto; overflow: hidden; min-height: 620px; }
     .review-focus-card { overflow: hidden; cursor: default; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .7fr); min-height: 600px; box-shadow: 0 24px 70px rgba(0,0,0,.28); }
     .review-focus-card:hover { transform: none; }
-    .review-focus-card > img { width: 100%; height: 100%; min-height: 600px; aspect-ratio: auto; object-fit: contain; background: #090a09; }
-    .review-focus-card .photo-meta { padding: 24px; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; border-left: 1px solid var(--line); }
+    .review-focus-card > img { width: 100%; height: 100%; min-height: 600px; aspect-ratio: auto; object-fit: contain; background: #090a09; grid-row: 1 / 3; }
+    .review-focus-card .photo-meta { padding: 24px; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; border-left: 1px solid var(--line); grid-column: 2; }
     .review-focus-card .photo-meta strong { font-size: 18px; }
     .gate1-evidence { color: var(--muted); font-size: 12px; }
     .gate1b-reason { color: var(--faint); font-size: 11px; }
@@ -146,7 +146,15 @@
     .gate1b-corrections label { display: grid; gap: 3px; color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
     .gate1b-corrections select { width: 100%; min-height: 38px; padding: 6px 7px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel-2); font-size: 11px; text-transform: none; letter-spacing: normal; }
     .gate1b-corrections .save-corrections { grid-column: 1/-1; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--moss-bright); background: var(--moss-wash); cursor: pointer; font-size: 11px; }
-    .review-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .profile-assignment { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .profile-assignment > strong { font-size: 12px !important; }
+    .profile-assignment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+    .profile-create-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(2, auto); gap: 7px; }
+    .profile-create-row button { grid-column: 1 / -1; }
+    .profile-assignment input, .profile-assignment select, .profile-assignment button { min-height: 38px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel-2); font-size: 11px; }
+    .profile-assignment button { color: var(--moss-bright); cursor: pointer; }
+    .profile-assignment button:disabled { color: var(--faint); cursor: not-allowed; }
+    .review-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px; border-left: 1px solid var(--line); grid-column: 2; align-self: start; }
     .review-actions button { min-height: 52px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: var(--panel-2); cursor: pointer; font-size: 12px; }
     .review-actions button:hover { color: var(--ink); border-color: var(--moss); background: var(--moss-wash); }
     .review-actions button.hd-priority { color: var(--moss-bright); border-color: rgba(130,184,137,.55); box-shadow: inset 0 0 0 1px rgba(130,184,137,.18); }
@@ -205,8 +213,9 @@
       .review-stage { min-height: 0; }
       .review-queues { grid-template-columns: 1fr; }
       .review-focus-card { grid-template-columns: 1fr; min-height: 0; }
-      .review-focus-card > img { min-height: 0; height: auto; max-height: 58vh; aspect-ratio: 4/3; }
-      .review-focus-card .photo-meta { padding: 16px; border-left: 0; border-top: 1px solid var(--line); }
+      .review-focus-card > img { min-height: 0; height: auto; max-height: 58vh; aspect-ratio: 4/3; grid-row: auto; }
+      .review-actions { grid-column: 1; padding: 10px; border-left: 0; border-top: 1px solid var(--line); }
+      .review-focus-card .photo-meta { padding: 16px; border-left: 0; border-top: 1px solid var(--line); grid-column: 1; }
       .camera-list { grid-template-columns: repeat(2, 1fr); }
       .map, .map-placeholder { min-height: 60vh; }
       .integrity { grid-template-columns: 1fr; }
@@ -326,6 +335,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=7" defer></script>
+  <script src="/app.js?v=8" defer></script>
 </body>
 </html>

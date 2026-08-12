@@ -4,6 +4,7 @@ const formatDate = value => value ? new Date(value).toLocaleString([], {dateStyl
 
 let photos = [];
 let cameras = [];
+let deerProfiles = [];
 let pipeline = {};
 let gate1bMetrics = {};
 let activeReviewQueue = 'likely_male';
@@ -198,6 +199,87 @@ function makeCorrectionControls(item) {
   return form;
 }
 
+async function submitProfileAssignment(item, payload, button) {
+  if (!item.review_token || button.disabled) return;
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = 'Saving…';
+  try {
+    const response = await fetch('/api/profile_assignment', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token: item.review_token, ...payload})
+    });
+    const data = await response.json().catch(() => ({ok: false}));
+    if (!response.ok || !data.ok) throw new Error('The deer profile could not be updated.');
+    button.textContent = payload.action === 'create' ? 'Profile created' : 'Photo added';
+    await fetchLibrary({preserveReview: true});
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = original;
+    showError(error.message || 'The deer profile could not be updated.');
+  }
+}
+
+function makeProfileControls(item) {
+  const section = document.createElement('div');
+  section.className = 'profile-assignment';
+  const heading = document.createElement('strong');
+  heading.textContent = 'Deer identity profile';
+  const capturedYear = new Date(item.captured_at).getFullYear();
+  const compatible = deerProfiles.filter(profile => Number(profile.season_year) === capturedYear);
+
+  const existingRow = document.createElement('div');
+  existingRow.className = 'profile-assignment-row';
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', 'Existing deer profile');
+  compatible.forEach(profile => {
+    const option = document.createElement('option');
+    option.value = profile.id;
+    option.textContent = `${profile.display_name} · ${profile.season_year} · ${profile.photo_count} photos`;
+    select.appendChild(option);
+  });
+  const attach = document.createElement('button');
+  attach.type = 'button';
+  attach.textContent = 'Add photo to profile';
+  attach.disabled = !compatible.length;
+  attach.addEventListener('click', event => {
+    event.stopPropagation();
+    submitProfileAssignment(item, {action: 'attach', profile_id: select.value}, attach);
+  });
+  existingRow.append(select, attach);
+
+  const createRow = document.createElement('div');
+  createRow.className = 'profile-create-row';
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.maxLength = 80;
+  name.placeholder = 'New deer name';
+  name.setAttribute('aria-label', 'New deer profile name');
+  const species = document.createElement('select');
+  [['white-tailed deer', 'Whitetail'], ['axis deer', 'Axis deer'], ['other deer', 'Other deer']].forEach(([value, label]) => {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; species.appendChild(option);
+  });
+  if (item.gate1b && item.gate1b.species_label === 'axis') species.value = 'axis deer';
+  const sex = document.createElement('select');
+  [['male', 'Male'], ['female', 'Female'], ['unknown', 'Unknown sex']].forEach(([value, label]) => {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; sex.appendChild(option);
+  });
+  if (!(item.gate1b && item.gate1b.probable_male === 'yes')) sex.value = 'unknown';
+  const create = document.createElement('button');
+  create.type = 'button';
+  create.textContent = 'Create new deer profile';
+  create.addEventListener('click', event => {
+    event.stopPropagation();
+    submitProfileAssignment(item, {
+      action: 'create', display_name: name.value, species: species.value, sex: sex.value
+    }, create);
+  });
+  createRow.append(name, species, sex, create);
+  section.append(heading, existingRow, createRow);
+  return section;
+}
+
 function makePhotoCard(item, options = {}) {
   const card = document.createElement('article');
   card.className = 'card photo-card' + (options.review ? ' review-card' : '');
@@ -209,6 +291,7 @@ function makePhotoCard(item, options = {}) {
   image.referrerPolicy = 'no-referrer';
   const meta = document.createElement('div');
   meta.className = 'photo-meta';
+  let quickActions = null;
   const title = document.createElement('strong');
   title.textContent = item.camera_name || 'Reveal camera';
   const captured = document.createElement('div');
@@ -235,11 +318,11 @@ function makePhotoCard(item, options = {}) {
     modelReason.className = 'gate1b-reason';
     modelReason.textContent = gate1b.reason || String(item.gate1.reason || 'model selected').replaceAll('_', ' ');
     const corrections = makeCorrectionControls(item);
-    const actions = document.createElement('div');
-    actions.className = 'review-actions';
+    const profileControls = makeProfileControls(item);
+    quickActions = document.createElement('div');
+    quickActions.className = 'review-actions';
     [
-      ['request_hd', 'Request HD'],
-      ['keep_for_identity', 'Keep for ID'],
+      ['request_hd', 'Pass → Request HD'],
       ['not_useful', 'Not useful'],
       ['defer', 'Defer']
     ].forEach(([action, label]) => {
@@ -252,11 +335,12 @@ function makePhotoCard(item, options = {}) {
         event.stopPropagation();
         submitReview(item, action, card);
       });
-      actions.appendChild(button);
+      quickActions.appendChild(button);
     });
-    meta.append(evidence, modelReason, corrections, actions);
+    meta.append(evidence, modelReason, corrections, profileControls);
   }
-  card.append(image, meta);
+  if (quickActions) card.append(image, quickActions, meta);
+  else card.append(image, meta);
   return card;
 }
 
@@ -423,11 +507,19 @@ function renderPipeline() {
 
 function collectProfiles() {
   const profiles = new Map();
+  deerProfiles.forEach(profile => profiles.set(String(profile.id), {
+    id: profile.id,
+    name: profile.display_name || 'Named deer',
+    seasonYear: profile.season_year,
+    photoCount: n(profile.photo_count),
+    photos: []
+  }));
   photos.forEach(item => photoAnimals(item).forEach(animal => {
-    const key = String(animal.id || animal.profile_id || animal.name || animal.profile_name || '');
+    const key = String(animal.profile_id || animal.id || animal.name || animal.profile_name || '');
     if (!key) return;
-    const existing = profiles.get(key) || {name: animal.name || animal.profile_name || 'Named deer', photos: []};
+    const existing = profiles.get(key) || {name: animal.display_name || animal.name || animal.profile_name || 'Named deer', photos: [], photoCount: 0};
     existing.photos.push(item);
+    existing.photoCount = Math.max(existing.photoCount || 0, existing.photos.length);
     profiles.set(key, existing);
   }));
   return [...profiles.values()];
@@ -457,20 +549,24 @@ function renderDeerProfiles() {
     const item = profile.photos[0];
     const card = document.createElement('article');
     card.className = 'card deer-card';
-    const image = document.createElement('img');
-    image.src = item.preview_url;
-    image.alt = `Profile photo for ${profile.name}`;
-    image.loading = 'lazy';
-    image.referrerPolicy = 'no-referrer';
+    if (item) {
+      const image = document.createElement('img');
+      image.src = item.preview_url;
+      image.alt = `Profile photo for ${profile.name}`;
+      image.loading = 'lazy';
+      image.referrerPolicy = 'no-referrer';
+      card.appendChild(image);
+    }
     const meta = document.createElement('div');
     meta.className = 'photo-meta';
     const title = document.createElement('strong');
     title.textContent = profile.name;
     const copy = document.createElement('div');
     copy.className = 'photo-date';
-    copy.textContent = `${profile.photos.length} confirmed ${profile.photos.length === 1 ? 'photo' : 'photos'}`;
+    const count = Math.max(profile.photoCount || 0, profile.photos.length);
+    copy.textContent = `${count} confirmed ${count === 1 ? 'photo' : 'photos'}${profile.seasonYear ? ` · ${profile.seasonYear}` : ''}`;
     meta.append(title, copy);
-    card.append(image, meta);
+    card.appendChild(meta);
     target.appendChild(card);
   });
 }
@@ -583,6 +679,7 @@ async function fetchLibrary(options = {}) {
   if (!response.ok || !data.ok) throw new Error('The photo catalog is temporarily unavailable.');
   photos = Array.isArray(data.photos) ? data.photos : [];
   cameras = Array.isArray(data.cameras) ? data.cameras : [];
+  deerProfiles = Array.isArray(data.profiles) ? data.profiles : [];
   pipeline = data.pipeline && typeof data.pipeline === 'object' ? data.pipeline : {};
   gate1bMetrics = data.gate1b && typeof data.gate1b === 'object' ? data.gate1b : {};
   mapboxToken = typeof data.mapbox_access_token === 'string' ? data.mapbox_access_token : '';

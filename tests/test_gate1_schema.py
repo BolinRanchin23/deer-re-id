@@ -326,6 +326,29 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("gate1b_recheck_suppression", sql)
         self.assertIn("set suppression_enabled = false", sql)
 
+    def test_profile_assignment_is_human_confirmed_season_scoped_and_service_only(self):
+        sql = (
+            Path("supabase/migrations/20260811233000_profile_assignment.sql")
+            .read_text()
+            .lower()
+        )
+        self.assertIn("deerid_create_profile_from_review", sql)
+        self.assertIn("deerid_attach_media_to_profile_from_review", sql)
+        self.assertIn("confirmation_status", sql)
+        self.assertIn("'confirmed'", sql)
+        self.assertIn("extract(year from media_captured_at)", sql)
+        self.assertIn("or review_state.resolved", sql)
+        for signature in (
+            "public.deerid_profiles()",
+            "public.deerid_create_profile_from_review(uuid, bigint, integer, text, text, text, text)",
+            "public.deerid_attach_media_to_profile_from_review(uuid, bigint, integer, uuid)",
+        ):
+            self.assertIn(
+                f"revoke all on function {signature} from public, anon, authenticated",
+                sql,
+            )
+            self.assertIn(f"grant execute on function {signature} to service_role", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

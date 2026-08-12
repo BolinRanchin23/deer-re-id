@@ -5,6 +5,7 @@ from pathlib import Path
 
 from api.library import handler as LibraryHandler
 from api.library_preview import handler as LibraryPreviewHandler
+from api.profile_assignment import handler as ProfileAssignmentHandler
 from api.review import handler as ReviewHandler
 from api.status import handler as StatusHandler
 
@@ -14,6 +15,7 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertTrue(issubclass(StatusHandler, BaseHTTPRequestHandler))
         self.assertTrue(issubclass(LibraryHandler, BaseHTTPRequestHandler))
         self.assertTrue(issubclass(LibraryPreviewHandler, BaseHTTPRequestHandler))
+        self.assertTrue(issubclass(ProfileAssignmentHandler, BaseHTTPRequestHandler))
         self.assertTrue(issubclass(ReviewHandler, BaseHTTPRequestHandler))
 
     def test_root_homepage_contains_operational_dashboard_shell(self):
@@ -49,14 +51,27 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn('id="workspace-shell"', html)
         self.assertNotIn("sessionStorage", html + app_js)
         self.assertNotIn("<script>", html)
-        self.assertIn('<script src="/app.js?v=7" defer></script>', html)
+        self.assertIn('<script src="/app.js?v=8" defer></script>', html)
         self.assertNotIn("GOOGLE_MAPS_BROWSER_KEY", html)
+
+    def test_mobile_review_places_consolidated_quick_actions_beside_the_photo(self):
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        compact_js = "".join(app_js.split())
+        self.assertIn("card.append(image,quickActions,meta)", compact_js)
+        self.assertIn("Pass → Request HD", app_js)
+        self.assertNotIn("Keep for ID", app_js)
+        self.assertIn("Create new deer profile", app_js)
+        self.assertIn("Add photo to profile", app_js)
+        self.assertIn("/api/profile_assignment", app_js)
+        self.assertIn("grid-template-columns:repeat(3,1fr)", "".join(html.split()))
 
     def test_vercel_config_sets_static_dashboard_security_headers_without_cron(self):
         config = json.loads(Path("vercel.json").read_text(encoding="utf-8"))
         self.assertNotIn("crons", config)
         self.assertIn("api/library.py", config["functions"])
         self.assertIn("api/library_preview.py", config["functions"])
+        self.assertIn("api/profile_assignment.py", config["functions"])
         self.assertIn("api/review.py", config["functions"])
         self.assertNotIn("api/auth.py", config["functions"])
         root = next(item for item in config["headers"] if item["source"] == "/")

@@ -63,41 +63,31 @@ flowchart TD
     X4 --> X5
     X5 --> X6[Download and verify returned HD media]
     X6 --> X7{Real quality gain?}
-    X7 -->|Yes| Y
     X7 -->|No / malformed / not improved| X8[Retain evidence and flag for review]
-    X8 --> Y
+    X7 -->|Yes| AD[HD per-animal detection and crop separation]
+    X8 --> Y[Human exception review]
 
-    Y --> Z{Human decision}
-    Z -->|Request HD| X
-    Z -->|Keep for ID| AA[Identity evidence queue]
-    Z -->|Not useful| AB[Resolve review; retain archived evidence]
-    Z -->|Defer| AC[Leave unresolved for later review]
-
-    AA --> AD[Per-animal detection and crop separation]
-    AD --> AE{Identity-worthy?}
-    AE -->|No| AF[Retain event; no identity retrieval]
-    AE -->|Yes| AG[Cue-specific crops]
+    AD --> AE[Versioned HD model pass]
+    AE --> AE1[Identity quality + age-class assistance + antler-score eligibility]
+    AE1 --> AG[Cue-specific crops and embeddings]
     AG --> AG1[Full body]
     AG --> AG2[Head / face / ears]
     AG --> AG3[Antlers]
     AG --> AG4[Axis left flank]
     AG --> AG5[Axis right flank]
+    AG --> AH[Open-set profile retrieval]
+    AH --> AI[Top-k existing profiles + unknown/new option]
+    AI --> Y[Human reviews HD image with model assistance]
 
-    AG --> AH[Versioned embeddings]
-    AH --> AI[Open-set nearest-neighbor retrieval]
-    AI --> AJ[Filter/rank by species, season, life stage, camera/time context and cue compatibility]
-    AJ --> AK[Top-k candidate profiles + unknown/new option]
-    AK --> AL{Human identity decision}
-
-    AL -->|Confirm existing candidate| AM[Append confirmed media assignment]
-    AL -->|None match / new deer| AN[Create long-lived animal + season/stage appearance profile]
-    AL -->|Reject candidate| AO[Store rejection; do not alter confirmed identity]
-    AL -->|Insufficient evidence| AP[Keep unknown / defer / seek more evidence]
-    AL -->|Correct past identity| AQ[Merge or split with preserved history]
+    Y --> Z{Human decision}
+    Z -->|Pass for identity| X[Request HD if not already available]
+    Z -->|Confirm existing profile| AM[Append confirmed media assignment]
+    Z -->|Create new deer| AN[Create animal + season appearance profile]
+    Z -->|Not useful| AB[Resolve review; retain archived evidence]
+    Z -->|Defer| AC[Leave unresolved for later review]
 
     AM --> AR[Update profile evidence view]
     AN --> AR
-    AQ --> AR
     AR --> AS[Human-confirmed named deer profile]
 ```
 
@@ -119,12 +109,14 @@ flowchart TD
    - Confident non-targets and blank/below-threshold captures remain archived.
    - Model evidence and routing reasons are versioned and append-only.
 
-3. **Human review actions**
-   - **Request HD:** atomically reserves the review, calls Reveal, and records the provider outcome.
-   - **Keep for ID:** resolves the current review as identity-relevant evidence. It does **not yet** run re-ID.
+3. **Human review and profile actions**
+   - **Pass → Request HD:** the single positive quick action atomically reserves the review, calls Reveal, records the provider outcome and marks the event as continuing toward the identity path. There is no separate “Keep for ID” button.
    - **Not useful:** resolves the review without deleting the archived media.
    - **Defer:** leaves the item unresolved so it can be reviewed later.
-   - Decisions are tied to a specific Gate 1 assessment and review version so stale browser actions cannot overwrite a newer decision.
+   - Quick actions render immediately beside/below the current image; editable model attributes and profile controls remain below them so routine review does not require scrolling away from the photo.
+   - **Create new deer profile:** creates a long-lived animal plus the capture-year appearance profile and appends the current image as human-confirmed evidence.
+   - **Add photo to profile:** appends the current image to a compatible existing capture-year profile without overwriting previous assignments.
+   - Decisions and profile writes are tied to a specific Gate 1 assessment and review version so stale browser actions cannot overwrite a newer decision.
 
 4. **HD request and retrieval state machine**
    - States: `queued → requesting → submitted → available`, with `failed`, `unknown` and `cancelled` side states.
@@ -157,9 +149,10 @@ A female candidate is **not the same as a confirmed female**. Positive male/antl
 1. Human-label the model-assisted validation batch through the four correction controls, covering all four cameras, whitetail, axis, day/color, night/IR, mixed groups and difficult negatives.
 2. Report the labeled buck-event recall and every false-negative before considering explicit activation of bulk female-only suppression.
 3. Use the resulting labels to calibrate or train task-specific heads; the current general-purpose vision model is a conservative prioritizer, not a validated sex/species classifier.
-4. Request the best one or two frames for uncertain/mixed events rather than every burst frame.
-5. After HD retrieval, perform deeper per-animal detection and separate each visible deer before any identity operation.
-6. Add explicit technical and task gates:
+4. After Gate 1B’s local buck/antler HD policy is validated, automatically request the best event frame whenever pinned-model male/antler evidence crosses the approved threshold. Until then, positive model evidence prioritizes the event but does not silently trigger a billable request.
+5. After HD retrieval, run deeper per-animal detection, identity-quality assessment, age-class assistance, antler-score eligibility/estimation and open-set profile matching **before** routine human review.
+6. Present the reviewer with the verified HD image, model evidence, age/score assistance, ranked profile candidates, and explicit existing/new/unknown choices; thumbnail review becomes an exception path rather than the normal identity workflow.
+7. Add explicit technical and task gates:
    - `identity_eligible`
    - `age_eligible`
    - `spread_eligible`
@@ -188,8 +181,7 @@ Re-ID will be **open-set retrieval with human confirmation**, not a classifier t
 
 | Human decision | Immediate effect | Downstream trigger |
 |---|---|---|
-| **Request HD** | Reserves and resolves the current review only after provider handling is safely recorded | Reveal HD request → later sync → verified HD retrieval → renewed quality/identity review |
-| **Keep for ID** | Marks current media as identity-relevant and resolves Gate 1 review | Planned per-animal crop, identity-quality gate, embedding and top-k retrieval |
+| **Pass → Request HD** | Safely records the provider request and resolves the thumbnail review only after the outcome is fenced | Verified HD retrieval → HD model pass → age/score assistance + top-k identity candidates → human HD review |
 | **Not useful** | Resolves the review | No re-ID or measurement work; immutable evidence remains in archive |
 | **Defer** | Keeps the review unresolved | Item returns for later human decision; no billable or identity side effect |
 | **Correct Gate 1B attributes** | Stores human labels separately from model output | Validation metrics, threshold calibration and future training data |

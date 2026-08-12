@@ -90,6 +90,9 @@ class SupabaseCatalog:
             "deerid_private_library", {"p_limit": max(1, min(60, int(limit)))}
         )
 
+    def read_profiles(self) -> Any:
+        return self._rpc("deerid_profiles", {})
+
     def read_camera_map(self) -> Any:
         return self._rpc("deerid_private_camera_map", {})
 
@@ -148,6 +151,46 @@ class SupabaseCatalog:
                 "p_probable_male": probable_male,
                 "p_head_visibility": head_visibility,
                 "p_note": note or None,
+            },
+        )
+
+    def create_profile_from_review(
+        self,
+        media_id: str,
+        assessment_id: int,
+        review_version: int,
+        display_name: str,
+        species: str,
+        sex: str,
+        notes: str,
+    ) -> Any:
+        return self._rpc(
+            "deerid_create_profile_from_review",
+            {
+                "p_media_id": media_id,
+                "p_assessment_id": assessment_id,
+                "p_review_version": review_version,
+                "p_display_name": display_name,
+                "p_species": species,
+                "p_sex": sex,
+                "p_notes": notes or None,
+            },
+        )
+
+    def attach_media_to_profile(
+        self,
+        media_id: str,
+        assessment_id: int,
+        review_version: int,
+        profile_id: str,
+    ) -> Any:
+        return self._rpc(
+            "deerid_attach_media_to_profile_from_review",
+            {
+                "p_media_id": media_id,
+                "p_assessment_id": assessment_id,
+                "p_review_version": review_version,
+                "p_profile_id": profile_id,
             },
         )
 
@@ -266,6 +309,7 @@ def handle_library(
             catalog.read_library(MAX_LIBRARY_PHOTOS), signing_key, current
         )
         cameras = _sanitize_cameras(catalog.read_camera_map())
+        profiles = _sanitize_profiles(catalog.read_profiles())
         pipeline = _sanitize_pipeline(
             catalog.read_gate1_funnel(GATE1_MODEL_NAME, GATE1_MODEL_VERSION)
         )
@@ -276,6 +320,7 @@ def handle_library(
         "ok": True,
         "photos": photos,
         "cameras": cameras,
+        "profiles": profiles,
         "pipeline": pipeline,
         "gate1b": gate1b,
     }
@@ -436,6 +481,72 @@ def handle_review(
     return 200, {"ok": True, "media_id": media_id, "action": action}
 
 
+def handle_profile_assignment(
+    environ: Mapping[str, str],
+    token: str,
+    action: str,
+    *,
+    display_name: str = "",
+    species: str = "",
+    sex: str = "",
+    profile_id: str = "",
+    notes: str = "",
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Create a season profile from a review image or confirm it on an existing profile."""
+    if (
+        action not in {"create", "attach"}
+        or not isinstance(notes, str)
+        or len(notes) > 500
+    ):
+        return 400, {"ok": False, "error": "invalid profile assignment"}
+    if action == "create" and (
+        not isinstance(display_name, str)
+        or not 1 <= len(display_name.strip()) <= 80
+        or species not in {"white-tailed deer", "axis deer", "other deer"}
+        or sex not in {"male", "female", "unknown"}
+    ):
+        return 400, {"ok": False, "error": "invalid profile assignment"}
+    if action == "attach" and (
+        not isinstance(profile_id, str) or _UUID.fullmatch(profile_id) is None
+    ):
+        return 400, {"ok": False, "error": "invalid profile assignment"}
+    key = _signing_key(environ)
+    current = int(time.time()) if epoch_now is None else int(epoch_now)
+    capability = _verify_review_token(token, key, current) if key is not None else None
+    url = environ.get("SUPABASE_URL", "")
+    secret = environ.get("SUPABASE_SECRET_KEY", "")
+    if capability is None or not url or not secret:
+        return 404, {"ok": False, "error": "not found"}
+    media_id, assessment_id, review_version = capability
+    try:
+        catalog = catalog_factory(
+            url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
+        )
+        clock = time.monotonic
+        catalog.set_deadline(clock() + LIBRARY_DEADLINE_SECONDS, clock=clock)
+        if action == "create":
+            result = catalog.create_profile_from_review(
+                media_id,
+                assessment_id,
+                review_version,
+                display_name.strip(),
+                species,
+                sex,
+                notes.strip(),
+            )
+        else:
+            result = catalog.attach_media_to_profile(
+                media_id, assessment_id, review_version, profile_id
+            )
+        if not isinstance(result, Mapping) or not result.get("ok"):
+            raise StorageError("Profile assignment failed")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
+        return 503, {"ok": False, "error": "profile assignment unavailable"}
+    return 200, dict(result)
+
+
 def handle_gate1b_label(
     environ: Mapping[str, str],
     token: str,
@@ -578,6 +689,40 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
             )
         output.append(safe)
     return output
+
+
+def _sanitize_profiles(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > 500:
+        raise StorageError("Deer profiles are unavailable")
+    profiles: list[Dict[str, Any]] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            raise StorageError("Deer profiles are unavailable")
+        profile_id = raw.get("id")
+        animal_id = raw.get("animal_id")
+        display_name = raw.get("display_name")
+        if (
+            not isinstance(profile_id, str)
+            or _UUID.fullmatch(profile_id) is None
+            or not isinstance(animal_id, str)
+            or _UUID.fullmatch(animal_id) is None
+            or not isinstance(display_name, str)
+            or not display_name.strip()
+            or len(display_name) > 80
+        ):
+            raise StorageError("Deer profiles are unavailable")
+        profiles.append(
+            {
+                "id": profile_id,
+                "animal_id": animal_id,
+                "display_name": display_name.strip(),
+                "species": str(raw.get("species") or "unknown")[:80],
+                "sex": str(raw.get("sex") or "unknown")[:20],
+                "season_year": int(raw.get("season_year") or 0),
+                "photo_count": max(0, int(raw.get("photo_count") or 0)),
+            }
+        )
+    return profiles
 
 
 def _sanitize_cameras(value: Any) -> list[Dict[str, Any]]:

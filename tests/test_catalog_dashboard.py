@@ -6,6 +6,7 @@ from reveal_downloader.catalog import (
     handle_gate1b_label,
     handle_library,
     handle_library_preview,
+    handle_profile_assignment,
     handle_review,
 )
 from reveal_downloader.client import HDRequestRejected, RevealError
@@ -20,6 +21,8 @@ class MemoryCatalog:
         self.hd_completed = None
         self.hd_failed = None
         self.hd_unknown = None
+        self.profile_created = None
+        self.profile_attached = None
 
     def set_deadline(self, deadline, clock=None):
         self.deadline = deadline
@@ -54,6 +57,19 @@ class MemoryCatalog:
                 "object_path": "must-not-leak.jpg",
             }
         ][:limit]
+
+    def read_profiles(self):
+        return [
+            {
+                "id": "44444444-4444-4444-8444-444444444444",
+                "animal_id": "55555555-5555-4555-8555-555555555555",
+                "display_name": "Wide Ten",
+                "species": "white-tailed deer",
+                "sex": "male",
+                "season_year": 2026,
+                "photo_count": 3,
+            }
+        ]
 
     def read_camera_map(self):
         return [
@@ -150,6 +166,34 @@ class MemoryCatalog:
         self.reviewed = (media_id, assessment_id, review_version, action, note)
         return {"ok": True, "media_id": media_id, "action": action}
 
+    def create_profile_from_review(
+        self, media_id, assessment_id, review_version, display_name, species, sex, notes
+    ):
+        self.profile_created = (
+            media_id,
+            assessment_id,
+            review_version,
+            display_name,
+            species,
+            sex,
+            notes,
+        )
+        return {
+            "ok": True,
+            "profile_id": "44444444-4444-4444-8444-444444444444",
+        }
+
+    def attach_media_to_profile(
+        self, media_id, assessment_id, review_version, profile_id
+    ):
+        self.profile_attached = (
+            media_id,
+            assessment_id,
+            review_version,
+            profile_id,
+        )
+        return {"ok": True, "profile_id": profile_id}
+
     def begin_hd_request(self, media_id, assessment_id, review_version, note):
         self.hd_begun = (media_id, assessment_id, review_version, note)
         return {
@@ -206,6 +250,8 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(len(payload["photos"]), 1)
         self.assertEqual(len(payload["cameras"]), 1)
+        self.assertEqual(payload["profiles"][0]["display_name"], "Wide Ten")
+        self.assertEqual(payload["profiles"][0]["photo_count"], 3)
         self.assertEqual(payload["mapbox_access_token"], "pk.mapbox-browser-token")
         self.assertRegex(
             payload["photos"][0]["preview_url"], r"^/api/library_preview\?token="
@@ -317,6 +363,79 @@ class PrivateLibraryTests(unittest.TestCase):
                 epoch_now=1_786_200_001,
             )[0],
             400,
+        )
+
+    def test_profile_assignment_can_create_and_attach_without_resolving_review(self):
+        environment = self.environment()
+        catalog = MemoryCatalog()
+        _, payload = handle_library(
+            environment, catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
+        )
+        token = payload["photos"][0]["review_token"]
+
+        status, result = handle_profile_assignment(
+            environment,
+            token,
+            "create",
+            display_name="Wide Ten",
+            species="white-tailed deer",
+            sex="male",
+            notes="Split brow tine",
+            catalog_factory=lambda *_: catalog,
+            epoch_now=1_786_200_001,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            catalog.profile_created[3:],
+            ("Wide Ten", "white-tailed deer", "male", "Split brow tine"),
+        )
+        self.assertIsNone(catalog.reviewed)
+
+        profile_id = "44444444-4444-4444-8444-444444444444"
+        status, result = handle_profile_assignment(
+            environment,
+            token,
+            "attach",
+            profile_id=profile_id,
+            catalog_factory=lambda *_: catalog,
+            epoch_now=1_786_200_001,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["profile_id"], profile_id)
+        self.assertEqual(catalog.profile_attached[-1], profile_id)
+
+    def test_profile_assignment_rejects_invalid_or_tampered_input(self):
+        catalog = MemoryCatalog()
+        _, payload = handle_library(
+            self.environment(),
+            catalog_factory=lambda *_: catalog,
+            epoch_now=1_786_200_000,
+        )
+        token = payload["photos"][0]["review_token"]
+        self.assertEqual(
+            handle_profile_assignment(
+                self.environment(),
+                token,
+                "create",
+                display_name="",
+                species="white-tailed deer",
+                sex="male",
+                catalog_factory=lambda *_: catalog,
+                epoch_now=1_786_200_001,
+            )[0],
+            400,
+        )
+        self.assertEqual(
+            handle_profile_assignment(
+                self.environment(),
+                token + "x",
+                "attach",
+                profile_id="44444444-4444-4444-8444-444444444444",
+                catalog_factory=lambda *_: catalog,
+                epoch_now=1_786_200_001,
+            )[0],
+            404,
         )
 
     def test_request_hd_calls_reveal_and_finalizes_durable_request(self):
@@ -486,8 +605,9 @@ class Gate1ReviewUiTests(unittest.TestCase):
         script = Path("public/app.js").read_text()
         self.assertIn("gate1.route === 'review'", script)
         self.assertIn("/api/review", script)
-        for action in ("request_hd", "keep_for_identity", "not_useful", "defer"):
+        for action in ("request_hd", "not_useful", "defer"):
             self.assertIn(action, script)
+        self.assertNotIn("keep_for_identity", script)
 
     def test_review_ui_advances_one_card_and_preloads_five_without_full_refresh(self):
         html = Path("public/index.html").read_text()

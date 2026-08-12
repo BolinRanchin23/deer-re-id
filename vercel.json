@@ -25,6 +25,10 @@
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     },
+    "api/profile_assignment.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
     "api/hd_requests.py": {
       "maxDuration": 60,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
