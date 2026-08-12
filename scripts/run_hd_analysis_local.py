@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Quiet scheduler entry point for OpenAI-backed returned-HD review."""
-import fcntl,json,os,subprocess,sys
+import fcntl,json,os,subprocess,sys,time
 from pathlib import Path
 PROJECT_REF="vypmpmlhuqwvrxypowqa"; REPO=Path(__file__).resolve().parents[1]
 BWS=Path.home()/".hermes/profiles/deer-id-dev-bot/bin/bws"
 def _bitwarden_openai_key():
- records=json.loads(subprocess.run([str(BWS),"secret","list","--output","json"],check=True,capture_output=True,text=True,timeout=30).stdout)
- return next(x["value"] for x in records if x.get("key")=="OPENAI_API_KEY" and x.get("value"))
+ for attempt in range(2):
+  try:
+   records=json.loads(subprocess.run([str(BWS),"secret","list","--output","json"],check=True,capture_output=True,text=True,timeout=30).stdout)
+   return next(x["value"] for x in records if x.get("key")=="OPENAI_API_KEY" and x.get("value"))
+  except (json.JSONDecodeError,StopIteration,subprocess.SubprocessError):
+   if attempt: raise
+   time.sleep(2)
 def main():
  lock=open("/tmp/deerid-hd-analysis.lock","w")
  try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
