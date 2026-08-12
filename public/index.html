@@ -128,6 +128,10 @@
     .empty-inner { max-width: 430px; }
     .empty strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 16px; font-weight: 580; }
     .review-stage { position: relative; width: min(920px, 100%); margin: 0 auto; overflow: hidden; min-height: 620px; }
+    #hd-review-stage { display: grid; gap: 18px; overflow: visible; }
+    .hd-review-card { overflow: hidden; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .7fr); }
+    .hd-review-image { width: 100%; height: auto; max-height: 72vh; display: block; object-fit: contain; object-position: center; align-self: center; background: #090a09; }
+    .hd-review-card .photo-meta { padding: 20px; border-left: 1px solid var(--line); }
     .review-focus-card { overflow: hidden; cursor: default; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .7fr); min-height: 600px; box-shadow: 0 24px 70px rgba(0,0,0,.28); }
     .review-focus-card:hover { transform: none; }
     .review-focus-card > img { width: 100%; height: 100%; min-height: 600px; aspect-ratio: auto; object-fit: contain; background: #090a09; grid-row: 1 / 3; }
@@ -211,6 +215,10 @@
       .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
       .deer-grid { grid-template-columns: 1fr; }
       .review-stage { min-height: 0; }
+      #hd-review-stage { width: 100%; }
+      .hd-review-card { display: block; }
+      .hd-review-image { width: 100%; height: auto; max-height: none; object-fit: contain; }
+      .hd-review-card .photo-meta { padding: 16px; border-left: 0; border-top: 1px solid var(--line); }
       .review-queues { grid-template-columns: 1fr; }
       .review-focus-card { grid-template-columns: 1fr; min-height: 0; }
       .review-focus-card > img { min-height: 0; height: auto; max-height: 58vh; aspect-ratio: 4/3; grid-row: auto; }
@@ -352,6 +360,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=11" defer></script>
+  <script src="/app.js?v=12" defer></script>
 </body>
 </html>

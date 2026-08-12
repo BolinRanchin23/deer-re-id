@@ -712,6 +712,15 @@ class Gate1ReviewUiTests(unittest.TestCase):
         script = Path("public/app.js").read_text()
         self.assertNotIn("triage_class === 'female_candidate'", script)
         self.assertIn("gate1b.queue", script)
+    def test_returned_hd_uses_full_frame_contain_rendering(self):
+        html = Path("public/index.html").read_text()
+        script = Path("public/app.js").read_text()
+        self.assertIn("hd-review-image", script)
+        self.assertIn(".hd-review-image", html)
+        self.assertIn("object-fit: contain", html)
+        self.assertIn("height: auto", html)
+        self.assertIn("Create new profile", script)
+
     def test_automation_audit_label_is_append_only_and_action_specific(self):
         catalog = MemoryCatalog()
         token = _sign_aux_action_token(8, "audit", 1_786_200_100, b"preview-signing-secret-at-least-16")
