@@ -273,8 +273,8 @@ class SupabaseCatalog:
     def record_automation_label(self, event_id: int, verdict: str, note: str = "") -> Any:
         return self._rpc("deerid_record_gate1b_automation_label", {"p_automation_event_id": event_id, "p_verdict": verdict, "p_note": note or None})
 
-    def record_hd_review_decision(self, result_id: int, action: str, *, profile_id: Optional[str] = None, display_name: str = "", species: str = "", sex: str = "", note: str = "") -> Any:
-        return self._rpc("deerid_record_hd_review_decision", {"p_hd_review_result_id": result_id, "p_action": action, "p_profile_id": profile_id, "p_display_name": display_name or None, "p_species": species or None, "p_sex": sex or None, "p_note": note or None})
+    def record_hd_review_decision(self, result_id: int, action: str, *, instance_id: Optional[str] = None, profile_id: Optional[str] = None, display_name: str = "", species: str = "", sex: str = "", note: str = "") -> Any:
+        return self._rpc("deerid_record_hd_review_decision", {"p_hd_review_result_id": result_id, "p_action": action, "p_profile_id": profile_id, "p_display_name": display_name or None, "p_species": species or None, "p_sex": sex or None, "p_note": note or None, "p_hd_animal_instance_id": instance_id})
 
     def read_gate1_pending(
         self, model_name: str, model_version: str, limit: int = 60
@@ -582,11 +582,11 @@ def handle_profile_assignment(
 
 
 def handle_hd_review_decision(
-    environ: Mapping[str, str], token: str, action: str, *, profile_id: str = "", display_name: str = "", species: str = "", sex: str = "", note: str = "", catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog, epoch_now: Optional[int] = None,
+    environ: Mapping[str, str], token: str, action: str, *, instance_id: str = "", profile_id: str = "", display_name: str = "", species: str = "", sex: str = "", note: str = "", catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog, epoch_now: Optional[int] = None,
 ) -> Tuple[int, Dict[str, Any]]:
     key = _signing_key(environ); current = int(time.time()) if epoch_now is None else int(epoch_now)
     result_id = _verify_aux_action_token(token, "hdreview", key, current) if key is not None else None
-    if result_id is None or action not in {"create_profile", "match_profile", "not_identity_worthy", "defer"} or any(not isinstance(x, str) for x in (profile_id, display_name, species, sex, note)) or len(note) > 500:
+    if result_id is None or _UUID.fullmatch(instance_id or "") is None or action not in {"create_profile", "match_profile", "not_identity_worthy", "defer"} or any(not isinstance(x, str) for x in (profile_id, display_name, species, sex, note)) or len(note) > 500:
         return 404, {"ok": False, "error": "not found"}
     if action == "match_profile" and _UUID.fullmatch(profile_id) is None:
         return 400, {"ok": False, "error": "invalid HD review decision"}
@@ -594,7 +594,7 @@ def handle_hd_review_decision(
     if not url or not secret: return 404, {"ok": False, "error": "not found"}
     try:
         catalog=catalog_factory(url,secret,environ.get("SUPABASE_BUCKET","tactacam-photos")); clock=time.monotonic; catalog.set_deadline(clock()+LIBRARY_DEADLINE_SECONDS,clock=clock)
-        result=catalog.record_hd_review_decision(result_id,action,profile_id=profile_id or None,display_name=display_name,species=species,sex=sex,note=note.strip())
+        result=catalog.record_hd_review_decision(result_id,action,instance_id=instance_id,profile_id=profile_id or None,display_name=display_name,species=species,sex=sex,note=note.strip())
         if not isinstance(result,Mapping) or not result.get("ok"): raise StorageError("HD review decision failed")
     except (AttributeError,OSError,RuntimeError,TypeError,ValueError,StorageError): return 503,{"ok":False,"error":"HD review decision unavailable"}
     return 200,dict(result)

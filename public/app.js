@@ -603,12 +603,100 @@ function renderAutomationAudit() {
 }
 
 function renderHDReview() {
-  const target=$('hd-review-stage'); if(!target)return; target.replaceChildren();
-  hdReviewQueue.forEach(item=>{const result=item.result||{};const card=document.createElement('article');card.className='card hd-review-card';const image=document.createElement('img');image.className='hd-review-image';image.src=item.preview_url;image.alt='Returned HD deer photo';image.loading='lazy';image.referrerPolicy='no-referrer';const meta=document.createElement('div');meta.className='photo-meta';const heading=document.createElement('strong');heading.textContent=`${result.species||'Unknown deer'} · ${result.sex||'unknown sex'}`;const summary=document.createElement('p');summary.textContent=result.summary||'Analysis pending';const ageCues=(result.age_cues||[]).join(', ')||'not assessable';const details=document.createElement('p');details.textContent=`View: ${result.view_angle||'unknown'} · visible tines L/R: ${result.visible_tines_left??'—'}/${result.visible_tines_right??'—'} · ${result.tine_count_limitations||'visibility limitations not recorded'} · Antlers: ${result.antler_structure||'not described'} · Age: ${result.age_class||'unknown'} (${ageCues})`;const controls=document.createElement('div');controls.className='profile-assignment';const select=document.createElement('select');deerProfiles.filter(p=>Number(p.season_year)===new Date(item.captured_at).getFullYear()).forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.display_name;select.appendChild(o);});const match=document.createElement('button');match.textContent='Match existing profile';match.disabled=!select.options.length;match.onclick=()=>submitHDReviewDecision(item,{action:'match_profile',profile_id:select.value},match);const name=document.createElement('input');name.placeholder='New deer name';const create=document.createElement('button');create.textContent='Create new profile';create.onclick=()=>submitHDReviewDecision(item,{action:'create_profile',display_name:name.value,species:result.species==='axis'?'axis deer':result.species==='whitetail'?'white-tailed deer':'other deer',sex:['male','female'].includes(result.sex)?result.sex:'unknown'},create);const skip=document.createElement('button');skip.textContent='Not identity-worthy';skip.onclick=()=>submitHDReviewDecision(item,{action:'not_identity_worthy'},skip);controls.append(select,match,name,create,skip);meta.append(heading,summary,details,controls);card.append(image,meta);target.appendChild(card);});
-  if(!hdReviewQueue.length){const empty=document.createElement('div');empty.className='card empty';empty.textContent='No returned HD photos awaiting profile review.';target.appendChild(empty);}
+  const target = $('hd-review-stage');
+  if (!target) return;
+  target.replaceChildren();
+  hdReviewQueue.forEach(item => {
+    const result = item.result || {};
+    const bbox = item.bbox || {x: 0, y: 0, width: 1, height: 1};
+    const card = document.createElement('article');
+    card.className = 'card hd-review-card';
+
+    const visual = document.createElement('div');
+    visual.className = 'hd-instance-visual';
+    const crop = document.createElement('div');
+    crop.className = 'hd-instance-crop';
+    const cropImage = document.createElement('img');
+    cropImage.src = item.preview_url;
+    cropImage.alt = `Animal ${item.instance_index} crop from returned HD photo`;
+    cropImage.loading = 'lazy';
+    cropImage.referrerPolicy = 'no-referrer';
+    cropImage.style.width = `${100 / Number(bbox.width || 1)}%`;
+    cropImage.style.height = `${100 / Number(bbox.height || 1)}%`;
+    cropImage.style.left = `${-100 * Number(bbox.x || 0) / Number(bbox.width || 1)}%`;
+    cropImage.style.top = `${-100 * Number(bbox.y || 0) / Number(bbox.height || 1)}%`;
+    crop.appendChild(cropImage);
+
+    const context = document.createElement('div');
+    context.className = 'hd-instance-context';
+    const contextImage = document.createElement('img');
+    contextImage.className = 'hd-review-image';
+    contextImage.className = 'hd-review-image';
+    contextImage.src = item.preview_url;
+    contextImage.alt = 'Full returned HD frame for context';
+    contextImage.loading = 'lazy';
+    contextImage.referrerPolicy = 'no-referrer';
+    const box = document.createElement('div');
+    box.className = 'hd-context-box';
+    box.style.left = `${100 * Number(bbox.x || 0)}%`;
+    box.style.top = `${100 * Number(bbox.y || 0)}%`;
+    box.style.width = `${100 * Number(bbox.width || 1)}%`;
+    box.style.height = `${100 * Number(bbox.height || 1)}%`;
+    context.append(contextImage, box);
+    visual.append(crop, context);
+
+    const meta = document.createElement('div');
+    meta.className = 'photo-meta';
+    const instance = document.createElement('div');
+    instance.className = 'hd-instance-label';
+    instance.textContent = `Animal ${item.instance_index} of ${item.instance_count} · One deer at a time`;
+    const heading = document.createElement('strong');
+    heading.textContent = `${result.species || 'Unknown deer'} · ${result.sex || 'unknown sex'}`;
+    const summary = document.createElement('p');
+    summary.textContent = result.summary || 'Analysis pending';
+    const ageCues = (result.age_cues || []).join(', ') || 'not assessable';
+    const details = document.createElement('p');
+    details.textContent = `View: ${result.view_angle || 'unknown'} · visible tines L/R: ${result.visible_tines_left ?? '—'}/${result.visible_tines_right ?? '—'} · ${result.tine_count_limitations || 'visibility limitations not recorded'} · Antlers: ${result.antler_structure || 'not described'} · Age: ${result.age_class || 'unknown'} (${ageCues})`;
+    const detection = document.createElement('p');
+    detection.className = item.detection_complete ? 'hd-detection-ok' : 'hd-detection-warning';
+    detection.textContent = item.detection_complete ? item.detection_notes : `Detector needs human attention: ${item.detection_notes}`;
+
+    const controls = document.createElement('div');
+    controls.className = 'profile-assignment';
+    const select = document.createElement('select');
+    deerProfiles.filter(p => Number(p.season_year) === new Date(item.captured_at).getFullYear()).forEach(p => {
+      const option = document.createElement('option'); option.value = p.id; option.textContent = p.display_name; select.appendChild(option);
+    });
+    const match = document.createElement('button');
+    match.textContent = 'Match this animal to existing profile';
+    match.disabled = !select.options.length;
+    match.onclick = () => submitHDReviewDecision(item, {action: 'match_profile', profile_id: select.value}, match);
+    const name = document.createElement('input');
+    name.placeholder = `New name for Animal ${item.instance_index}`;
+    const create = document.createElement('button');
+    create.textContent = 'Create new profile for this animal';
+    create.onclick = () => submitHDReviewDecision(item, {action: 'create_profile', display_name: name.value, species: result.species === 'axis' ? 'axis deer' : result.species === 'whitetail' ? 'white-tailed deer' : 'other deer', sex: ['male', 'female'].includes(result.sex) ? result.sex : 'unknown'}, create);
+    const skip = document.createElement('button');
+    skip.textContent = 'This animal is not identity-worthy';
+    skip.onclick = () => submitHDReviewDecision(item, {action: 'not_identity_worthy'}, skip);
+    controls.append(select, match, name, create, skip);
+    meta.append(instance, heading, summary, details, detection, controls);
+    card.append(visual, meta);
+    target.appendChild(card);
+  });
+  if (!hdReviewQueue.length) {
+    const empty = document.createElement('div'); empty.className = 'card empty'; empty.textContent = 'No returned HD animal instances awaiting profile review.'; target.appendChild(empty);
+  }
 }
 
-async function submitHDReviewDecision(item,payload,button){button.disabled=true;const response=await fetch('/api/hd_review_decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action_token:item.action_token,...payload})});const data=await response.json().catch(()=>({ok:false}));if(!response.ok||!data.ok){button.disabled=false;return showError('HD profile decision could not be saved.');}hdReviewQueue=hdReviewQueue.filter(x=>x.hd_review_result_id!==item.hd_review_result_id);await fetchLibrary();}
+async function submitHDReviewDecision(item, payload, button) {
+  button.disabled = true;
+  const response = await fetch('/api/hd_review_decision', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action_token: item.action_token, hd_animal_instance_id: item.hd_animal_instance_id, ...payload})});
+  const data = await response.json().catch(() => ({ok: false}));
+  if (!response.ok || !data.ok) { button.disabled = false; return showError('HD profile decision could not be saved.'); }
+  hdReviewQueue = hdReviewQueue.filter(x => x.hd_animal_instance_id !== item.hd_animal_instance_id);
+  await fetchLibrary();
+}
 
 function renderCameraCards() {
   const list = $('camera-list');

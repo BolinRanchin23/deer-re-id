@@ -57,6 +57,43 @@ class FakeAnalyzer:
 
 
 class ReturnedHDWorkerTests(unittest.TestCase):
+    def test_multi_animal_result_preserves_one_bbox_and_analysis_per_deer(self):
+        animal = {
+            "instance_index": 1,
+            "bbox": {"x": 0.08, "y": 0.14, "width": 0.34, "height": 0.72},
+            "species":"whitetail","sex":"male","identity_eligible":True,
+            "view_angle":"broadside_left","head_visibility":"full","body_visibility":"full",
+            "visible_tines_left":5,"visible_tines_right":2,"tine_count_limitations":"right side partly hidden",
+            "antler_structure":"wide sweep","beam_observation":"left beam visible","mass_observation":"moderate",
+            "spread_observation":"not reliable broadside","asymmetry_or_damage":"none visible",
+            "antler_condition":"hard_antler","age_eligible":True,"age_class":"mature_4_5_plus",
+            "age_cues":["deep chest"],"antler_score_eligible":False,"antler_score_range":"unknown",
+            "score_limitations":"no scale","distinguishing_features":["split brow"],"summary":"Left buck."
+        }
+        result = hd_analysis_worker.normalize_result({
+            "animal_count": 2,
+            "detection_complete": True,
+            "detection_notes": "two separated bucks",
+            "animals": [animal, {**animal, "instance_index": 2, "bbox": {"x": 0.54, "y": 0.2, "width": 0.38, "height": 0.68}, "summary": "Right buck."}],
+        })
+        self.assertEqual(result["animal_count"], 2)
+        self.assertEqual([x["instance_index"] for x in result["animals"]], [1, 2])
+        self.assertEqual(result["animals"][1]["bbox"]["x"], 0.54)
+
+    def test_multi_animal_result_rejects_duplicate_indexes_and_unsafe_boxes(self):
+        base = {
+            "instance_index": 1, "bbox": {"x": 0.8, "y": 0.1, "width": 0.3, "height": 0.5},
+            "species":"whitetail","sex":"male","identity_eligible":True,"view_angle":"unknown",
+            "head_visibility":"partial","body_visibility":"partial","visible_tines_left":0,"visible_tines_right":0,
+            "tine_count_limitations":"unknown","antler_structure":"unknown","beam_observation":"unknown",
+            "mass_observation":"unknown","spread_observation":"unknown","asymmetry_or_damage":"unknown",
+            "antler_condition":"unknown","age_eligible":False,"age_class":"unknown","age_cues":[],
+            "antler_score_eligible":False,"antler_score_range":"unknown","score_limitations":"unknown",
+            "distinguishing_features":[],"summary":"Partial deer."
+        }
+        with self.assertRaises(hd_analysis_worker.ModelUnavailable):
+            hd_analysis_worker.normalize_result({"animal_count":1,"detection_complete":True,"detection_notes":"one","animals":[base]})
+
     def test_angle_aware_antler_and_age_result_is_normalized(self):
         result = {
             "species":"whitetail","sex":"male","animal_count":1,"identity_eligible":True,

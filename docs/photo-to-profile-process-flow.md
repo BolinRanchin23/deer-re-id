@@ -64,10 +64,14 @@ flowchart TD
     X5 --> X6[Download and verify returned HD media]
     X6 --> X7{Real quality gain?}
     X7 -->|No / malformed / not improved| X8[Retain evidence and flag for review]
-    X7 -->|Yes| AD[HD per-animal detection and crop separation]
+    X7 -->|Yes| AD[HD animal-instance detection]
     X8 --> Y[Human exception review]
 
-    AD --> AE[Versioned HD model pass]
+    AD --> AD1[One immutable child crop per visible deer]
+    AD1 --> AD2{Detection complete and separable?}
+    AD2 -->|Yes| AE[Versioned HD model pass per animal instance]
+    AD2 -->|Overlap, missed deer, or ambiguous boundary| Y1[Human correct boxes / split / mark inseparable]
+    Y1 --> AE
     AE --> AE1[Identity quality + age-class assistance + antler-score eligibility]
     AE1 --> AG[Cue-specific crops and embeddings]
     AG --> AG1[Full body]
@@ -77,7 +81,7 @@ flowchart TD
     AG --> AG5[Axis right flank]
     AG --> AH[Open-set profile retrieval]
     AH --> AI[Top-k existing profiles + unknown/new option]
-    AI --> Y[Human reviews HD image with model assistance]
+    AI --> Y[Human reviews one deer crop at a time with full-frame context]
 
     Y --> Z{Human decision}
     Z -->|Pass for identity| X[Request HD if not already available]
@@ -145,32 +149,43 @@ The model is operational by owner-authorized override, **not because it passed t
 ### 🧭 Planned next
 
 1. Accumulate automatic-routing audit labels across all cameras, species, day/color and IR, and report every missed buck and unnecessary HD request.
-2. Add reproducible per-animal crops, embeddings, and ranked open-set profile candidates to the returned-HD result; current review supports profile creation/matching but does not yet compute similarity candidates.
-3. Calibrate or replace the operational model from observed mistakes while preserving exact model/prompt lineage.
-4. Add explicit technical and task gates:
+2. Add a dedicated HD animal-instance detector before returned-HD identity review. It must emit one versioned bounding box (and optional mask) per visible deer, generate one immutable child crop per detection, and create one review item per animal instance while retaining the full HD frame as context. The reviewer must be able to add a missed deer, resize a bad box, split a merged detection, or mark overlapping animals inseparable. No full-frame profile assignment is allowed when more than one deer is present.
+3. Add reproducible cue crops, embeddings, and ranked open-set profile candidates to each animal-instance result; current review supports profile creation/matching but does not yet compute similarity candidates.
+4. Calibrate or replace the operational model from observed mistakes while preserving exact model/prompt lineage.
+5. Add explicit technical and task gates:
    - `identity_eligible`
    - `age_eligible`
    - `spread_eligible`
    - `beam_tine_eligible`
    - axis left/right-flank eligibility
-7. Queue identity-worthy evidence for future embeddings and candidate retrieval.
+6. Queue identity-worthy per-animal evidence for future embeddings and candidate retrieval.
 
 ### 🔬 Future re-identification process
 
 Re-ID will be **open-set retrieval with human confirmation**, not a classifier that must force every photo into an existing name.
 
 1. Detect each animal independently; never assign one event-level identity to every deer in a group photo.
-2. Create reproducible, cue-specific crops and embeddings rather than one irreversible “master embedding.”
-3. Search compatible season/stage galleries and return ranked top-k candidates.
-4. Keep model similarity, calibrated match probability and human confirmation as separate fields.
-5. Let the reviewer:
+2. Treat the detector output as an **animal instance**, not an identity. Each instance gets its own child crop, review state, quality flags, candidate set, and eventual profile decision, all linked back to the same immutable HD parent frame.
+3. Create reproducible, cue-specific crops and embeddings rather than one irreversible “master embedding.” Preserve crop coordinates, padding, detector/model version, and source-asset hash so every crop can be regenerated.
+4. Search compatible season/stage galleries and return ranked top-k candidates.
+5. Keep model similarity, calibrated match probability and human confirmation as separate fields.
+6. Let the reviewer:
    - confirm an existing deer;
    - reject one or more candidates;
    - create a new deer when none match;
    - leave the animal unknown when evidence is insufficient;
    - merge duplicate identities or split a contaminated profile.
-6. Append every assignment/correction. Never overwrite raw media, model outputs or decision history.
-7. Maintain one long-lived animal record with season/stage-scoped appearance profiles because coat, body, injuries and antlers change over time.
+7. Append every assignment/correction. Never overwrite raw media, model outputs or decision history.
+8. Maintain one long-lived animal record with season/stage-scoped appearance profiles because coat, body, injuries and antlers change over time.
+
+### Multi-animal HD review contract
+
+- **Unit of identity review:** one detected deer instance/crop, never the whole group photo.
+- **Context:** show the selected crop prominently and the full HD frame with that animal's box highlighted; allow switching among `Animal 1`, `Animal 2`, and so on.
+- **Independent outcome:** each animal can be matched to a different existing capture-year profile, create a different new profile, be rejected as identity-poor, or remain unknown/deferred.
+- **Shared provenance:** all child crops point to the same parent HD asset/event, but no identity decision propagates from one crop to another.
+- **Duplicate control:** detections across burst frames may later be track-linked for reviewer convenience, but tracking must not silently collapse two nearby deer or auto-assign identity.
+- **Failure behavior:** detector uncertainty, overlap, or a disagreement between animal count and boxes routes to box-correction review before re-ID; it never drops the extra deer.
 
 ## Human decisions and their downstream triggers
 

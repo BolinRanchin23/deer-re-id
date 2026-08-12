@@ -730,7 +730,7 @@ class Gate1ReviewUiTests(unittest.TestCase):
         self.assertIn(".hd-review-image", html)
         self.assertIn("object-fit: contain", html)
         self.assertIn("height: auto", html)
-        self.assertIn("Create new profile", script)
+        self.assertIn("Create profile for this animal", script)
 
     def test_automation_audit_label_is_append_only_and_action_specific(self):
         catalog = MemoryCatalog()

@@ -11,6 +11,22 @@ MIGRATIONS = Path("supabase/migrations")
 
 
 class CatalogSchemaTests(unittest.TestCase):
+    def test_multi_animal_hd_migration_creates_instance_scoped_review_and_assignments(self):
+        sql = (MIGRATIONS / "20260812010000_multi_animal_hd_review.sql").read_text(encoding="utf-8").lower()
+        for required in (
+            "create table deerid.hd_animal_instances",
+            "bbox_x double precision",
+            "detection_complete boolean",
+            "hd_animal_instance_id uuid",
+            "unique (hd_animal_instance_id)",
+            "create or replace function public.deerid_complete_hd_review",
+            "create or replace function public.deerid_hd_review_queue",
+            "create or replace function public.deerid_record_hd_review_decision",
+        ):
+            self.assertIn(required, sql)
+        self.assertIn("check (bbox_x + bbox_width <= 1)", sql)
+        self.assertIn("animal instance", sql)
+
     def test_timestamp_parser_is_correctly_marked_stable(self):
         migration = MIGRATIONS / "20260810232827_timestamp_parser_stability.sql"
         sql = migration.read_text(encoding="utf-8").lower()

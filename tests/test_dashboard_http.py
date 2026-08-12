@@ -51,7 +51,7 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn('id="workspace-shell"', html)
         self.assertNotIn("sessionStorage", html + app_js)
         self.assertNotIn("<script>", html)
-        self.assertIn('<script src="/app.js?v=13" defer></script>', html)
+        self.assertIn('<script src="/app.js?v=14" defer></script>', html)
         self.assertIn('id="photos-24h"', html)
         self.assertIn('id="hd-requests-24h"', html)
         self.assertIn('id="hd-available-24h"', html)
@@ -72,6 +72,16 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         compact_html = "".join(html.split())
         self.assertIn("grid-template-columns:repeat(3,1fr)", compact_html)
         self.assertIn(".profile-create-rowinput,.profile-create-rowbutton{grid-column:1/-1", compact_html)
+
+    def test_returned_hd_review_is_scoped_to_one_animal_instance(self):
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        self.assertIn("Animal ${item.instance_index} of ${item.instance_count}", app_js)
+        self.assertIn("hd-instance-crop", app_js)
+        self.assertIn("hd-context-box", app_js)
+        self.assertIn("item.hd_animal_instance_id", app_js)
+        self.assertIn("One deer at a time", app_js)
+        self.assertIn(".hd-context-box", html)
 
     def test_vercel_config_sets_static_dashboard_security_headers_without_cron(self):
         config = json.loads(Path("vercel.json").read_text(encoding="utf-8"))

@@ -130,7 +130,20 @@
     .review-stage { position: relative; width: min(920px, 100%); margin: 0 auto; overflow: hidden; min-height: 620px; }
     #hd-review-stage { display: grid; gap: 18px; overflow: visible; }
     .hd-review-card { overflow: hidden; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .7fr); }
-    .hd-review-image { width: 100%; height: auto; max-height: 72vh; display: block; object-fit: contain; object-position: center; align-self: center; background: #090a09; }
+    .hd-instance-crop { position: relative; align-self: center; background: #090a09; }
+    .hd-context-box { position: absolute; border: 2px solid var(--moss-bright); border-radius: 6px; box-shadow: 0 0 0 9999px rgba(0,0,0,.18); pointer-events: none; }
+    .hd-review-image { width: 100%; height: auto; display: block; object-fit: contain; }
+    .hd-instance-visual { min-width: 0; padding: 12px; display: grid; grid-template-rows: minmax(320px, 1fr) auto; gap: 10px; background: #090a09; }
+    .hd-instance-crop { position: relative; min-height: 320px; overflow: hidden; border-radius: 10px; background: #050605; }
+    .hd-instance-crop img { position: absolute; max-width: none; object-fit: fill; }
+    .hd-instance-context { position: relative; width: min(360px, 100%); justify-self: center; line-height: 0; }
+    .hd-instance-context img { width: 100%; height: auto; display: block; border-radius: 8px; opacity: .82; }
+    .hd-review-image { width: 100%; height: auto; display: block; object-fit: contain; object-position: center; }
+    .hd-context-box { position: absolute; border: 2px solid var(--moss-bright); border-radius: 4px; box-shadow: 0 0 0 9999px rgba(0,0,0,.2); pointer-events: none; }
+    .hd-instance-label { margin-bottom: 8px; color: var(--moss-bright); font: 600 10px/1.3 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .hd-detection-ok, .hd-detection-warning { padding: 9px 10px; border-radius: 8px; font-size: 11px; }
+    .hd-detection-ok { color: var(--muted); background: var(--panel-2); }
+    .hd-detection-warning { color: var(--amber); border: 1px solid rgba(220,181,109,.35); background: rgba(220,181,109,.08); }
     .hd-review-card .photo-meta { padding: 20px; border-left: 1px solid var(--line); }
     .review-focus-card { overflow: hidden; cursor: default; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .7fr); min-height: 600px; box-shadow: 0 24px 70px rgba(0,0,0,.28); }
     .review-focus-card:hover { transform: none; }
@@ -219,7 +232,8 @@
       .review-stage { min-height: 0; }
       #hd-review-stage { width: 100%; }
       .hd-review-card { display: block; }
-      .hd-review-image { width: 100%; height: auto; max-height: none; object-fit: contain; }
+      .hd-instance-visual { grid-template-rows: minmax(280px, 52vh) auto; }
+      .hd-instance-crop { min-height: 280px; }
       .hd-review-card .photo-meta { padding: 16px; border-left: 0; border-top: 1px solid var(--line); }
       .review-queues { grid-template-columns: 1fr; }
       .review-focus-card { grid-template-columns: 1fr; min-height: 0; }
@@ -362,6 +376,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=13" defer></script>
+  <script src="/app.js?v=14" defer></script>
 </body>
 </html>
