@@ -3,6 +3,7 @@ from pathlib import Path
 
 from reveal_downloader.catalog import (
     _sanitize_photos,
+    _sign_aux_action_token,
     handle_gate1b_label,
     handle_automation_label,
     handle_library,
@@ -713,14 +714,16 @@ class Gate1ReviewUiTests(unittest.TestCase):
         self.assertIn("gate1b.queue", script)
     def test_automation_audit_label_is_append_only_and_action_specific(self):
         catalog = MemoryCatalog()
+        token = _sign_aux_action_token(8, "audit", 1_786_200_100, b"preview-signing-secret-at-least-16")
         status, payload = handle_automation_label(
-            PrivateLibraryTests.environment(), 8, "should_have_requested_hd", "missed buck",
-            catalog_factory=lambda *_: catalog,
+            PrivateLibraryTests.environment(), token, "should_have_requested_hd", "missed buck",
+            catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000,
         )
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
         self.assertEqual(catalog.automation_labeled, (8, "should_have_requested_hd", "missed buck"))
-        self.assertEqual(handle_automation_label(PrivateLibraryTests.environment(), 8, "bad", catalog_factory=lambda *_: catalog)[0], 400)
+        self.assertEqual(handle_automation_label(PrivateLibraryTests.environment(), token, "bad", catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000)[0], 404)
+        self.assertEqual(handle_automation_label(PrivateLibraryTests.environment(), "forged", "correct", catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000)[0], 404)
 
 
 if __name__ == "__main__":

@@ -582,10 +582,12 @@ def handle_profile_assignment(
 
 
 def handle_hd_review_decision(
-    environ: Mapping[str, str], result_id: int, action: str, *, profile_id: str = "", display_name: str = "", species: str = "", sex: str = "", note: str = "", catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    environ: Mapping[str, str], token: str, action: str, *, profile_id: str = "", display_name: str = "", species: str = "", sex: str = "", note: str = "", catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog, epoch_now: Optional[int] = None,
 ) -> Tuple[int, Dict[str, Any]]:
-    if isinstance(result_id, bool) or not isinstance(result_id, int) or result_id < 1 or action not in {"create_profile", "match_profile", "not_identity_worthy", "defer"} or any(not isinstance(x, str) for x in (profile_id, display_name, species, sex, note)) or len(note) > 500:
-        return 400, {"ok": False, "error": "invalid HD review decision"}
+    key = _signing_key(environ); current = int(time.time()) if epoch_now is None else int(epoch_now)
+    result_id = _verify_aux_action_token(token, "hdreview", key, current) if key is not None else None
+    if result_id is None or action not in {"create_profile", "match_profile", "not_identity_worthy", "defer"} or any(not isinstance(x, str) for x in (profile_id, display_name, species, sex, note)) or len(note) > 500:
+        return 404, {"ok": False, "error": "not found"}
     if action == "match_profile" and _UUID.fullmatch(profile_id) is None:
         return 400, {"ok": False, "error": "invalid HD review decision"}
     url=environ.get("SUPABASE_URL",""); secret=environ.get("SUPABASE_SECRET_KEY","")
@@ -600,14 +602,17 @@ def handle_hd_review_decision(
 
 def handle_automation_label(
     environ: Mapping[str, str],
-    event_id: int,
+    token: str,
     verdict: str,
     note: str = "",
     *,
     catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
 ) -> Tuple[int, Dict[str, Any]]:
-    if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1 or verdict not in {"correct", "should_have_requested_hd", "incorrect_male_or_antler"} or not isinstance(note, str) or len(note) > 500:
-        return 400, {"ok": False, "error": "invalid automation label"}
+    key = _signing_key(environ); current = int(time.time()) if epoch_now is None else int(epoch_now)
+    event_id = _verify_aux_action_token(token, "audit", key, current) if key is not None else None
+    if event_id is None or verdict not in {"correct", "should_have_requested_hd", "incorrect_male_or_antler"} or not isinstance(note, str) or len(note) > 500:
+        return 404, {"ok": False, "error": "not found"}
     url = environ.get("SUPABASE_URL", ""); secret = environ.get("SUPABASE_SECRET_KEY", "")
     if not url or not secret:
         return 404, {"ok": False, "error": "not found"}
@@ -794,6 +799,8 @@ def _sanitize_auxiliary_media_rows(value: Any, key: bytes, now: int, id_field: s
         asset_id = raw.get("media_asset_id")
         token = _sign_asset_token(asset_id, now + LIBRARY_PREVIEW_SECONDS, key) if isinstance(asset_id, str) and _UUID.fullmatch(asset_id) else _sign_media_token(media_id, now + LIBRARY_PREVIEW_SECONDS, key)
         safe["preview_url"] = "/api/library_preview?token=" + token
+        purpose = "audit" if id_field == "automation_event_id" else "hdreview"
+        safe["action_token"] = _sign_aux_action_token(row_id, purpose, now + LIBRARY_REVIEW_SECONDS, key)
         output.append(safe)
     return output
 
@@ -996,6 +1003,21 @@ def _sign_media_token(media_id: str, expires: int, key: bytes) -> str:
     payload = f"{expires}.{media_id}"
     signature = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
+
+
+def _sign_aux_action_token(row_id: int, purpose: str, expires: int, key: bytes) -> str:
+    payload = f"{expires}.{purpose}.{row_id}"
+    signature = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _verify_aux_action_token(token: str, purpose: str, key: bytes, now: int) -> Optional[int]:
+    parts = token.split(".") if isinstance(token, str) else []
+    if len(parts) != 4 or parts[1] != purpose or not parts[0].isdigit() or not parts[2].isdigit(): return None
+    expires, row_id = int(parts[0]), int(parts[2])
+    if row_id < 1 or expires < now or expires > now + LIBRARY_REVIEW_SECONDS + 30: return None
+    expected = hmac.new(key, f"{expires}.{purpose}.{row_id}".encode("ascii"), hashlib.sha256).hexdigest()
+    return row_id if hmac.compare_digest(parts[3], expected) else None
 
 
 def _sign_review_token(

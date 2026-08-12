@@ -12,7 +12,7 @@ class handler(BaseHTTPRequestHandler):
             length=int(self.headers.get("Content-Length","0")); payload=json.loads(self.rfile.read(length).decode()) if 0 < length <= MAX_BODY_BYTES else None
         except (ValueError,UnicodeDecodeError,json.JSONDecodeError): payload=None
         if not isinstance(payload,dict): return self._write(400,{"ok":False,"error":"invalid request"})
-        status,result=handle_automation_label(os.environ,payload.get("automation_event_id"),payload.get("verdict",""),payload.get("note",""))
+        status,result=handle_automation_label(os.environ,payload.get("action_token"),payload.get("verdict",""),payload.get("note",""))
         self._write(status,result)
     def _write(self,status,payload):
         body=json.dumps(payload,sort_keys=True,separators=(",",":")).encode(); self.send_response(status)

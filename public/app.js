@@ -589,7 +589,7 @@ function renderAutomationAudit() {
     const copy=document.createElement('div'); copy.className='photo-date'; copy.textContent=`${item.camera_name||'Camera'} · ${formatDate(item.captured_at)}${item.human_verdict?` · ${item.human_verdict}`:''}`;
     const actions=document.createElement('div'); actions.className='quick-actions';
     const verdicts=item.action==='auto_request_hd'?[['correct','Correct'],['incorrect_male_or_antler','Incorrect male / antlers']]:[['correct','Correct'],['should_have_requested_hd','Should have requested HD']];
-    verdicts.forEach(([verdict,label])=>{const button=document.createElement('button'); button.type='button'; button.textContent=label; button.addEventListener('click',async()=>{button.disabled=true; const response=await fetch('/api/automation_label',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({automation_event_id:item.automation_event_id,verdict})}); const data=await response.json().catch(()=>({ok:false})); if(!response.ok||!data.ok){button.disabled=false;return showError('Audit label could not be saved.');} item.human_verdict=verdict; renderAutomationAudit();}); actions.appendChild(button);});
+    verdicts.forEach(([verdict,label])=>{const button=document.createElement('button'); button.type='button'; button.textContent=label; button.addEventListener('click',async()=>{button.disabled=true; const response=await fetch('/api/automation_label',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action_token:item.action_token,verdict})}); const data=await response.json().catch(()=>({ok:false})); if(!response.ok||!data.ok){button.disabled=false;return showError('Audit label could not be saved.');} item.human_verdict=verdict; renderAutomationAudit();}); actions.appendChild(button);});
     meta.append(title,copy,actions); card.append(image,meta); target.appendChild(card);
   });
   if(!automationAudit.length){const empty=document.createElement('div');empty.className='card empty';empty.textContent='No automatic routing decisions yet.';target.appendChild(empty);}
@@ -601,7 +601,7 @@ function renderHDReview() {
   if(!hdReviewQueue.length){const empty=document.createElement('div');empty.className='card empty';empty.textContent='No returned HD photos awaiting profile review.';target.appendChild(empty);}
 }
 
-async function submitHDReviewDecision(item,payload,button){button.disabled=true;const response=await fetch('/api/hd_review_decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hd_review_result_id:item.hd_review_result_id,...payload})});const data=await response.json().catch(()=>({ok:false}));if(!response.ok||!data.ok){button.disabled=false;return showError('HD profile decision could not be saved.');}hdReviewQueue=hdReviewQueue.filter(x=>x.hd_review_result_id!==item.hd_review_result_id);await fetchLibrary();}
+async function submitHDReviewDecision(item,payload,button){button.disabled=true;const response=await fetch('/api/hd_review_decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action_token:item.action_token,...payload})});const data=await response.json().catch(()=>({ok:false}));if(!response.ok||!data.ok){button.disabled=false;return showError('HD profile decision could not be saved.');}hdReviewQueue=hdReviewQueue.filter(x=>x.hd_review_result_id!==item.hd_review_result_id);await fetchLibrary();}
 
 function renderCameraCards() {
   const list = $('camera-list');
