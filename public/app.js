@@ -631,7 +631,6 @@ function renderHDReview() {
     context.className = 'hd-instance-context';
     const contextImage = document.createElement('img');
     contextImage.className = 'hd-review-image';
-    contextImage.className = 'hd-review-image';
     contextImage.src = item.preview_url;
     contextImage.alt = 'Full returned HD frame for context';
     contextImage.loading = 'lazy';
@@ -674,7 +673,7 @@ function renderHDReview() {
     const name = document.createElement('input');
     name.placeholder = `New name for Animal ${item.instance_index}`;
     const create = document.createElement('button');
-    create.textContent = 'Create new profile for this animal';
+    create.textContent = 'Create profile for this animal';
     create.onclick = () => submitHDReviewDecision(item, {action: 'create_profile', display_name: name.value, species: result.species === 'axis' ? 'axis deer' : result.species === 'whitetail' ? 'white-tailed deer' : 'other deer', sex: ['male', 'female'].includes(result.sex) ? result.sex : 'unknown'}, create);
     const skip = document.createElement('button');
     skip.textContent = 'This animal is not identity-worthy';
