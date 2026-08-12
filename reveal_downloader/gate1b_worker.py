@@ -8,7 +8,6 @@ import json
 import os
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from typing import Any, Callable, Mapping, Optional
 
@@ -19,9 +18,8 @@ from .catalog import (
 )
 from .gate1b import normalize_prediction, triage_prediction
 
-DEFAULT_MODEL = "gemma4:e4b"
-MODEL_DIGEST = "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb"
-DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
+DEFAULT_MODEL = "gpt-4o-mini-2024-07-18"
+OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
 PROMPT = (
@@ -96,60 +94,26 @@ class _HTTPTransport:
             raise ModelUnavailable("local model is unavailable") from exc
 
 
-class OllamaVisionClient:
+class OpenAIVisionClient:
     def __init__(
         self,
-        endpoint: str,
+        api_key: str,
         model: str,
         deadline: Optional[float] = None,
         clock: Callable[[], float] = time.monotonic,
         *,
         transport: Optional[Any] = None,
     ) -> None:
-        parsed = urllib.parse.urlsplit(endpoint)
-        if parsed.scheme != "http" or parsed.hostname not in {
-            "127.0.0.1",
-            "localhost",
-            "::1",
-        }:
-            raise ValueError("Ollama endpoint must be local loopback HTTP")
-        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
-            raise ValueError("Ollama endpoint is invalid")
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError("OpenAI API key is required")
         if model != DEFAULT_MODEL:
-            raise ValueError("Ollama model must be the pinned model tag")
-        self.endpoint = endpoint.rstrip("/")
+            raise ValueError("OpenAI model must be the pinned snapshot")
+        self.api_key = api_key.strip()
         self.model = model
         self.deadline = deadline
         self.clock = clock
         self.transport = transport or _HTTPTransport()
-        timeout = 30.0
-        if deadline is not None:
-            timeout = min(timeout, max(1.0, deadline - clock()))
-        status, body = self.transport.request(
-            "GET",
-            f"{self.endpoint}/api/tags",
-            headers={"Accept": "application/json"},
-            body=b"",
-            timeout=timeout,
-            max_response_bytes=MAX_RESPONSE_BYTES,
-        )
-        try:
-            models = json.loads(body.decode("utf-8")).get("models", [])
-            digest = next(
-                item.get("digest")
-                for item in models
-                if item.get("name") == DEFAULT_MODEL
-            )
-        except (
-            AttributeError,
-            StopIteration,
-            TypeError,
-            ValueError,
-            UnicodeDecodeError,
-        ):
-            digest = None
-        if status != 200 or digest != MODEL_DIGEST:
-            raise ModelUnavailable("local model digest is not pinned")
+
 
     def analyze(self, image: bytes) -> dict[str, Any]:
         if not image or len(image) > MAX_IMAGE_BYTES:
@@ -159,29 +123,30 @@ class OllamaVisionClient:
             timeout = min(timeout, max(1.0, self.deadline - self.clock()))
         payload = {
             "model": self.model,
-            "prompt": PROMPT,
-            "images": [base64.b64encode(image).decode("ascii")],
-            "stream": False,
-            "format": SCHEMA,
-            "options": {"temperature": 0},
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": PROMPT},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"), "detail": "low"}},
+            ]}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "deerid_gate1b", "strict": True, "schema": SCHEMA}},
+            "temperature": 0,
+            "max_tokens": 700,
         }
         status, body = self.transport.request(
             "POST",
-            f"{self.endpoint}/api/generate",
-            headers={"Content-Type": "application/json"},
+            OPENAI_ENDPOINT,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + self.api_key},
             body=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
             timeout=timeout,
             max_response_bytes=MAX_RESPONSE_BYTES,
         )
         if status != 200:
-            raise ModelUnavailable("local model request failed")
+            raise ModelUnavailable("OpenAI model request failed")
         try:
             outer = json.loads(body.decode("utf-8"))
-            if outer.get("done") is not True or not isinstance(
-                outer.get("response"), str
-            ):
+            content = outer["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
                 raise ValueError
-            return normalize_prediction(json.loads(outer["response"]))
+            return normalize_prediction(json.loads(content))
         except (
             AttributeError,
             TypeError,
@@ -189,7 +154,7 @@ class OllamaVisionClient:
             UnicodeDecodeError,
             json.JSONDecodeError,
         ) as exc:
-            raise ModelUnavailable("local model response is malformed") from exc
+            raise ModelUnavailable("OpenAI model response is malformed") from exc
 
 
 def run_worker(
@@ -197,7 +162,7 @@ def run_worker(
     *,
     limit: int = 20,
     catalog_factory: Callable[..., Any] = SupabaseCatalog,
-    analyzer_factory: Callable[..., Any] = OllamaVisionClient,
+    analyzer_factory: Callable[..., Any] = OpenAIVisionClient,
     deadline: Optional[float] = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
@@ -205,6 +170,9 @@ def run_worker(
     secret = environ.get("SUPABASE_SECRET_KEY", "")
     if not url or not secret:
         raise ValueError("Supabase configuration is required")
+    api_key = environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        raise ValueError("OpenAI configuration is required")
     bounded_limit = max(1, min(int(limit), 60))
     catalog = catalog_factory(
         url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
@@ -214,7 +182,7 @@ def run_worker(
     if not isinstance(pending, list) or len(pending) > bounded_limit:
         raise RuntimeError("Gate 1B pending response is invalid")
     analyzer = analyzer_factory(
-        environ.get("GATE1B_OLLAMA_URL", DEFAULT_ENDPOINT),
+        api_key,
         DEFAULT_MODEL,
         deadline,
         clock,

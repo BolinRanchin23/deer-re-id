@@ -3,9 +3,9 @@ from __future__ import annotations
 import base64,json,os,time,urllib.error,urllib.request
 from typing import Any,Callable,Mapping,Optional
 from .catalog import SupabaseCatalog
-from .gate1b_worker import DEFAULT_ENDPOINT,DEFAULT_MODEL,MODEL_DIGEST,ModelUnavailable
-MODEL_NAME="Ollama-Gemma4-Vision-HD"
-MODEL_VERSION="gemma4-e4b-c6eb396dbd59@hd-instances-2026-08-12.1"
+from .gate1b_worker import DEFAULT_MODEL,OPENAI_ENDPOINT,ModelUnavailable
+MODEL_NAME="OpenAI-GPT-4o-mini-Vision-HD"
+MODEL_VERSION="gpt-4o-mini-2024-07-18@hd-instances-2026-08-12.1"
 MAX_IMAGE_BYTES=24*1024*1024; MAX_RESPONSE_BYTES=128*1024
 PROMPT=("Detect EVERY visible deer and analyze each one separately for human profile review. Return one animals entry per deer, ordered left-to-right, with a tight normalized [0,1] bounding box around the complete visible animal. "
 "animal_count must equal the number of animals entries. detection_complete is false whenever a deer may be missed, two deer cannot be separated, or a boundary is uncertain. Describe that problem in detection_notes. "
@@ -65,30 +65,30 @@ def normalize_result(value:Mapping[str,Any])->dict[str,Any]:
  animals=[_normalize_animal(item) for item in value["animals"]]
  if [item["instance_index"] for item in animals]!=list(range(1,count+1)): raise ModelUnavailable("HD animal indexes are invalid")
  return {"animal_count":count,"detection_complete":value["detection_complete"],"detection_notes":value["detection_notes"].strip(),"animals":animals}
-class OllamaHDAnalyzer:
- def __init__(self,endpoint:str,model:str,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic):
-  if endpoint.rstrip("/") not in {"http://127.0.0.1:11434","http://localhost:11434"} or model!=DEFAULT_MODEL: raise ValueError("HD analyzer must use the pinned local model")
-  self.endpoint=endpoint.rstrip("/");self.model=model;self.deadline=deadline;self.clock=clock
-  with urllib.request.urlopen(f"{self.endpoint}/api/tags",timeout=5) as response: tags=json.load(response)
-  if not any(x.get("name")==DEFAULT_MODEL and x.get("digest")==MODEL_DIGEST for x in tags.get("models",[])): raise ModelUnavailable("local model digest is not pinned")
+class OpenAIHDAnalyzer:
+ def __init__(self,api_key:str,model:str,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic):
+  if not isinstance(api_key,str) or not api_key.strip(): raise ValueError("OpenAI API key is required")
+  if model!=DEFAULT_MODEL: raise ValueError("HD analyzer must use the pinned OpenAI snapshot")
+  self.api_key=api_key.strip();self.model=model;self.deadline=deadline;self.clock=clock
  def analyze(self,image:bytes)->dict[str,Any]:
   if not image or len(image)>MAX_IMAGE_BYTES: raise ModelUnavailable("HD image is invalid")
-  body=json.dumps({"model":self.model,"prompt":PROMPT,"images":[base64.b64encode(image).decode()],"stream":False,"format":SCHEMA,"options":{"temperature":0}},separators=(",",":")).encode()
-  request=urllib.request.Request(f"{self.endpoint}/api/generate",data=body,headers={"Content-Type":"application/json"},method="POST")
+  body=json.dumps({"model":self.model,"messages":[{"role":"user","content":[{"type":"text","text":PROMPT},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,"+base64.b64encode(image).decode(),"detail":"high"}}]}],"response_format":{"type":"json_schema","json_schema":{"name":"deerid_hd_analysis","strict":True,"schema":SCHEMA}},"temperature":0,"max_tokens":5000},separators=(",",":")).encode()
+  request=urllib.request.Request(OPENAI_ENDPOINT,data=body,headers={"Content-Type":"application/json","Authorization":"Bearer "+self.api_key},method="POST")
   try:
    with urllib.request.urlopen(request,timeout=180) as response: payload=response.read(MAX_RESPONSE_BYTES+1)
-  except (OSError,urllib.error.URLError) as exc: raise ModelUnavailable("local HD model unavailable") from exc
+  except (OSError,urllib.error.URLError) as exc: raise ModelUnavailable("OpenAI HD model unavailable") from exc
   if len(payload)>MAX_RESPONSE_BYTES: raise ModelUnavailable("HD model response is too large")
-  try: return normalize_result(json.loads(json.loads(payload)["response"]))
+  try: return normalize_result(json.loads(json.loads(payload)["choices"][0]["message"]["content"]))
   except (KeyError,TypeError,ValueError,json.JSONDecodeError) as exc: raise ModelUnavailable("HD model response is malformed") from exc
-def run_worker(environ:Mapping[str,str],*,catalog_factory:Callable[...,Any]=SupabaseCatalog,analyzer_factory:Callable[...,Any]=OllamaHDAnalyzer,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic)->dict[str,Any]:
+def run_worker(environ:Mapping[str,str],*,catalog_factory:Callable[...,Any]=SupabaseCatalog,analyzer_factory:Callable[...,Any]=OpenAIHDAnalyzer,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic)->dict[str,Any]:
  if not environ.get("SUPABASE_URL") or not environ.get("SUPABASE_SECRET_KEY"): raise ValueError("Supabase configuration is required")
+ if not environ.get("OPENAI_API_KEY"): raise ValueError("OpenAI configuration is required")
  catalog=catalog_factory(environ["SUPABASE_URL"],environ["SUPABASE_SECRET_KEY"],environ.get("SUPABASE_BUCKET","tactacam-photos"));catalog.set_deadline(deadline or clock()+900,clock=clock);claim=catalog.claim_hd_review(MODEL_NAME,MODEL_VERSION)
  if not isinstance(claim,Mapping) or not claim.get("ok"): raise RuntimeError("HD review claim failed")
  if claim.get("empty"): return {"ok":True,"empty":True,"completed":0,"failed":0}
  token=claim.get("claim_token")
  try:
-  image=catalog.read_private_image(claim["object_path"],max_bytes=MAX_IMAGE_BYTES);analyzer=analyzer_factory(environ.get("HD_OLLAMA_URL",DEFAULT_ENDPOINT),DEFAULT_MODEL,deadline,clock);result=analyzer.analyze(image);completed=catalog.complete_hd_review(token,MODEL_NAME,MODEL_VERSION,result)
+  image=catalog.read_private_image(claim["object_path"],max_bytes=MAX_IMAGE_BYTES);analyzer=analyzer_factory(environ["OPENAI_API_KEY"],DEFAULT_MODEL,deadline,clock);result=analyzer.analyze(image);completed=catalog.complete_hd_review(token,MODEL_NAME,MODEL_VERSION,result)
   if not isinstance(completed,Mapping) or not completed.get("ok"): raise RuntimeError("HD result recording failed")
  except ModelUnavailable:
   catalog.fail_hd_review(token,"model_unavailable");return {"ok":False,"empty":False,"completed":0,"failed":1}

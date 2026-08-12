@@ -38,8 +38,8 @@ class FakeCatalog:
 
 
 class FakeAnalyzer:
-    def __init__(self, endpoint, model, deadline, clock):
-        self.args = (endpoint, model, deadline)
+    def __init__(self, api_key, model, deadline, clock):
+        self.args = (api_key, model, deadline)
 
     def analyze(self, image):
         return {
@@ -114,7 +114,7 @@ class ReturnedHDWorkerTests(unittest.TestCase):
 
     def test_worker_claims_linked_hd_asset_and_records_profile_review_evidence(self):
         result = hd_analysis_worker.run_worker(
-            {"SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key"},
+            {"SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key", "OPENAI_API_KEY": "openai-test"},
             catalog_factory=FakeCatalog,
             analyzer_factory=FakeAnalyzer,
             deadline=100.0,
@@ -133,7 +133,7 @@ class ReturnedHDWorkerTests(unittest.TestCase):
                 raise hd_analysis_worker.ModelUnavailable("bad image")
 
         result = hd_analysis_worker.run_worker(
-            {"SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key"},
+            {"SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key", "OPENAI_API_KEY": "openai-test"},
             catalog_factory=FakeCatalog,
             analyzer_factory=FailingAnalyzer,
         )

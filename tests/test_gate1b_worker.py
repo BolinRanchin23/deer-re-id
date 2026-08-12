@@ -38,9 +38,9 @@ class FakeCatalog:
 class FakeAnalyzer:
     instance = None
 
-    def __init__(self, endpoint, model, deadline, clock):
+    def __init__(self, api_key, model, deadline, clock):
         type(self).instance = self
-        self.args = (endpoint, model, deadline)
+        self.args = (api_key, model, deadline)
 
     def analyze(self, image):
         self.image = image
@@ -63,7 +63,7 @@ class Gate1BWorkerTests(unittest.TestCase):
             {
                 "SUPABASE_URL": "https://project.supabase.co",
                 "SUPABASE_SECRET_KEY": "secret",
-                "GATE1B_OLLAMA_MODEL": "mutable-or-wrong:model",
+                "OPENAI_API_KEY": "test-openai-key",
             },
             limit=4,
             catalog_factory=FakeCatalog,
@@ -98,7 +98,7 @@ class Gate1BWorkerTests(unittest.TestCase):
                 raise gate1b_worker.ModelUnavailable("bad response")
 
         result = gate1b_worker.run_worker(
-            {"SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key"},
+            {"SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key", "OPENAI_API_KEY": "test-openai-key"},
             catalog_factory=FakeCatalog,
             analyzer_factory=FailingAnalyzer,
         )
@@ -106,14 +106,10 @@ class Gate1BWorkerTests(unittest.TestCase):
         self.assertEqual(result["recorded"], 0)
         self.assertIsNone(FakeCatalog.instance.recorded)
 
-    def test_ollama_client_requires_loopback_and_validates_structured_response(self):
-        with self.assertRaises(ValueError):
-            gate1b_worker.OllamaVisionClient("http://example.com:11434", "model")
-
+    def test_openai_client_uses_pinned_snapshot_and_validates_structured_response(self):
         response = json.dumps(
             {
-                "response": json.dumps(
-                    {
+                "choices": [{"message": {"content": json.dumps({
                         "animal_count": 1,
                         "species": "whitetail",
                         "visible_antler": "no",
@@ -123,9 +119,7 @@ class Gate1BWorkerTests(unittest.TestCase):
                         "mixed_group": False,
                         "all_animals_assessed": True,
                         "reason": "One clear antlerless deer.",
-                    }
-                ),
-                "done": True,
+                    })}}],
             }
         ).encode()
 
@@ -133,59 +127,26 @@ class Gate1BWorkerTests(unittest.TestCase):
             def request(
                 self, method, url, *, headers, body, timeout, max_response_bytes
             ):
-                if url.endswith("/api/tags"):
-                    return (
-                        200,
-                        json.dumps(
-                            {
-                                "models": [
-                                    {
-                                        "name": gate1b_worker.DEFAULT_MODEL,
-                                        "digest": gate1b_worker.MODEL_DIGEST,
-                                    }
-                                ]
-                            }
-                        ).encode(),
-                    )
+                self.headers = headers
                 self.body = json.loads(body)
                 return 200, response
 
         transport = Transport()
-        client = gate1b_worker.OllamaVisionClient(
-            "http://127.0.0.1:11434", "gemma4:e4b", transport=transport
+        client = gate1b_worker.OpenAIVisionClient(
+            "test-openai-key", gate1b_worker.DEFAULT_MODEL, transport=transport
         )
         prediction = client.analyze(b"jpeg")
         self.assertEqual(prediction["species"], "whitetail")
-        self.assertEqual(transport.body["options"]["temperature"], 0)
-        self.assertFalse(transport.body["stream"])
+        self.assertEqual(transport.body["model"], "gpt-4o-mini-2024-07-18")
+        self.assertEqual(transport.body["temperature"], 0)
+        self.assertEqual(transport.body["response_format"]["type"], "json_schema")
+        self.assertEqual(transport.headers["Authorization"], "Bearer test-openai-key")
 
-    def test_ollama_client_rejects_mutable_tag_when_digest_does_not_match(self):
-        class WrongDigestTransport:
-            def request(
-                self, method, url, *, headers, body, timeout, max_response_bytes
-            ):
-                return (
-                    200,
-                    json.dumps(
-                        {
-                            "models": [
-                                {
-                                    "name": gate1b_worker.DEFAULT_MODEL,
-                                    "digest": "0" * 64,
-                                }
-                            ]
-                        }
-                    ).encode(),
-                )
-
-        with self.assertRaisesRegex(
-            gate1b_worker.ModelUnavailable, "digest is not pinned"
-        ):
-            gate1b_worker.OllamaVisionClient(
-                "http://127.0.0.1:11434",
-                gate1b_worker.DEFAULT_MODEL,
-                transport=WrongDigestTransport(),
-            )
+    def test_openai_client_rejects_missing_key_and_mutable_model_alias(self):
+        with self.assertRaises(ValueError):
+            gate1b_worker.OpenAIVisionClient("", gate1b_worker.DEFAULT_MODEL)
+        with self.assertRaises(ValueError):
+            gate1b_worker.OpenAIVisionClient("test", "gpt-4o-mini")
 
 
 if __name__ == "__main__":

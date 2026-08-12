@@ -27,8 +27,8 @@ MAX_LIBRARY_PHOTOS = 50
 MAX_LIBRARY_PREVIEW_BYTES = 8 * 1024 * 1024
 GATE1_MODEL_NAME = "SpeciesNet"
 GATE1_MODEL_VERSION = "4.0.3a"
-GATE1B_MODEL_NAME = "Ollama-Gemma4-Vision"
-GATE1B_MODEL_VERSION = "gemma4-e4b-c6eb396dbd59@prompt-2026-08-11.1"
+GATE1B_MODEL_NAME = "OpenAI-GPT-4o-mini-Vision"
+GATE1B_MODEL_VERSION = "gpt-4o-mini-2024-07-18@prompt-2026-08-12.1"
 _UUID = re.compile(
     r"\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
 )

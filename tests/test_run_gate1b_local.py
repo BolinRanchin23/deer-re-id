@@ -1,28 +1,19 @@
 import unittest
-
+from unittest import mock
 from scripts import run_gate1b_local
 
-
 class Gate1BLocalRunnerTests(unittest.TestCase):
-    def test_model_tag_requires_exact_pinned_digest(self):
-        self.assertFalse(
-            run_gate1b_local.has_pinned_model(
-                {"models": [{"name": run_gate1b_local.MODEL, "digest": "0" * 64}]}
-            )
-        )
-        self.assertTrue(
-            run_gate1b_local.has_pinned_model(
-                {
-                    "models": [
-                        {
-                            "name": run_gate1b_local.MODEL,
-                            "digest": run_gate1b_local.MODEL_DIGEST,
-                        }
-                    ]
-                }
-            )
-        )
-
+    def test_production_environment_uses_ephemeral_vercel_export(self):
+        class Completed:
+            stdout = ""
+        def fake_run(command, **kwargs):
+            destination = command[5]
+            with open(destination, "w", encoding="utf-8") as handle:
+                handle.write('OPENAI_API_KEY="test-key"\n')
+            return Completed()
+        with mock.patch.object(run_gate1b_local.subprocess, "run", side_effect=fake_run):
+            values = run_gate1b_local._production_environment()
+        self.assertEqual(values["OPENAI_API_KEY"], "test-key")
 
 if __name__ == "__main__":
     unittest.main()
