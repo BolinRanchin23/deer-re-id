@@ -621,8 +621,10 @@ function renderHDReview() {
     cropImage.alt = `Animal ${item.instance_index} crop from returned HD photo`;
     cropImage.loading = 'lazy';
     cropImage.referrerPolicy = 'no-referrer';
+    const setCropRatio = () => { crop.style.aspectRatio = `${Number(bbox.width || 1) * cropImage.naturalWidth} / ${Number(bbox.height || 1) * cropImage.naturalHeight}`; };
+    cropImage.addEventListener('load', setCropRatio, {once: true});
+    if (cropImage.complete && cropImage.naturalWidth) setCropRatio();
     cropImage.style.width = `${100 / Number(bbox.width || 1)}%`;
-    cropImage.style.height = `${100 / Number(bbox.height || 1)}%`;
     cropImage.style.left = `${-100 * Number(bbox.x || 0) / Number(bbox.width || 1)}%`;
     cropImage.style.top = `${-100 * Number(bbox.y || 0) / Number(bbox.height || 1)}%`;
     crop.appendChild(cropImage);

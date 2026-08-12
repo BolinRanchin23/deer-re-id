@@ -134,8 +134,8 @@
     .hd-context-box { position: absolute; border: 2px solid var(--moss-bright); border-radius: 6px; box-shadow: 0 0 0 9999px rgba(0,0,0,.18); pointer-events: none; }
     .hd-review-image { width: 100%; height: auto; display: block; object-fit: contain; }
     .hd-instance-visual { min-width: 0; padding: 12px; display: grid; grid-template-rows: minmax(320px, 1fr) auto; gap: 10px; background: #090a09; }
-    .hd-instance-crop { position: relative; min-height: 320px; overflow: hidden; border-radius: 10px; background: #050605; }
-    .hd-instance-crop img { position: absolute; max-width: none; object-fit: fill; }
+    .hd-instance-crop { position: relative; width: 100%; overflow: hidden; border-radius: 10px; background: #050605; }
+    .hd-instance-crop img { position: absolute; max-width: none; height: auto; object-fit: contain; }
     .hd-instance-context { position: relative; width: min(360px, 100%); justify-self: center; line-height: 0; }
     .hd-instance-context img { width: 100%; height: auto; display: block; border-radius: 8px; opacity: .82; }
     .hd-review-image { width: 100%; height: auto; display: block; object-fit: contain; object-position: center; }
@@ -232,8 +232,7 @@
       .review-stage { min-height: 0; }
       #hd-review-stage { width: 100%; }
       .hd-review-card { display: block; }
-      .hd-instance-visual { grid-template-rows: minmax(280px, 52vh) auto; }
-      .hd-instance-crop { min-height: 280px; }
+      .hd-instance-visual { grid-template-rows: auto auto; }
       .hd-review-card .photo-meta { padding: 16px; border-left: 0; border-top: 1px solid var(--line); }
       .review-queues { grid-template-columns: 1fr; }
       .review-focus-card { grid-template-columns: 1fr; min-height: 0; }
@@ -376,6 +375,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=14" defer></script>
+  <script src="/app.js?v=15" defer></script>
 </body>
 </html>

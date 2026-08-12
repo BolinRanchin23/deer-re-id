@@ -247,6 +247,15 @@ class MemoryCatalog:
 
 
 class PrivateLibraryTests(unittest.TestCase):
+    def test_hd_crop_uses_aspect_ratio_without_fill_distortion(self):
+        app = (Path(__file__).parents[1] / "public" / "app.js").read_text()
+        page = (Path(__file__).parents[1] / "public" / "index.html").read_text()
+        self.assertIn("crop.style.aspectRatio", app)
+        self.assertNotIn("cropImage.style.height", app)
+        self.assertNotIn("object-fit: fill", page)
+        self.assertIn("object-fit: contain", page)
+        self.assertNotIn(".hd-instance-crop { min-height:", page)
+
     def test_postgrest_auth_distinguishes_modern_keys_from_legacy_jwts(self):
         self.assertEqual(
             _postgrest_auth_headers("sb_secret_test"), {"apikey": "sb_secret_test"}
