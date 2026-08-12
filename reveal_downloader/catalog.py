@@ -254,8 +254,8 @@ class SupabaseCatalog:
     def claim_queued_hd_request(self) -> Any:
         return self._rpc("deerid_claim_queued_hd_request", {})
 
-    def claim_hd_review(self, model_name: str, model_version: str) -> Any:
-        return self._rpc("deerid_claim_hd_review", {"p_model_name": model_name, "p_model_version": model_version})
+    def claim_hd_review(self, model_name: str, model_version: str, media_asset_id: Optional[str] = None) -> Any:
+        return self._rpc("deerid_claim_hd_review", {"p_model_name": model_name, "p_model_version": model_version, "p_media_asset_id": media_asset_id})
 
     def complete_hd_review(self, claim_token: str, model_name: str, model_version: str, result: Mapping[str, Any]) -> Any:
         return self._rpc("deerid_complete_hd_review", {"p_claim_token": claim_token, "p_model_name": model_name, "p_model_version": model_version, "p_result": dict(result)})

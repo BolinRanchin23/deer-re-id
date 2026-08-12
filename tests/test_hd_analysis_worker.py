@@ -13,8 +13,8 @@ class FakeCatalog:
     def set_deadline(self, deadline, *, clock):
         self.deadline = deadline
 
-    def claim_hd_review(self, model_name, model_version):
-        self.claim_args = (model_name, model_version)
+    def claim_hd_review(self, model_name, model_version, media_asset_id=None):
+        self.claim_args = (model_name, model_version, media_asset_id)
         return {
             "ok": True,
             "empty": False,
@@ -122,7 +122,7 @@ class ReturnedHDWorkerTests(unittest.TestCase):
         )
         self.assertEqual(result, {"ok": True, "empty": False, "completed": 1, "failed": 0})
         catalog = FakeCatalog.instance
-        self.assertEqual(catalog.claim_args, (hd_analysis_worker.MODEL_NAME, hd_analysis_worker.MODEL_VERSION))
+        self.assertEqual(catalog.claim_args, (hd_analysis_worker.MODEL_NAME, hd_analysis_worker.MODEL_VERSION, None))
         self.assertEqual(catalog.read_args[0], "linked_hd.jpg")
         self.assertEqual(catalog.completed[3]["identity_eligible"], True)
         self.assertEqual(catalog.completed[3]["distinguishing_features"], ["split right brow tine"])
@@ -140,6 +140,15 @@ class ReturnedHDWorkerTests(unittest.TestCase):
         self.assertEqual(result["failed"], 1)
         self.assertEqual(FakeCatalog.instance.failed[1], "model_unavailable")
         self.assertIsNone(FakeCatalog.instance.completed)
+
+    def test_trigger_targets_the_new_hd_asset_and_requires_bearer_secret(self):
+        environment = {"HD_ANALYSIS_TRIGGER_SECRET": "0123456789abcdef", "SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key", "OPENAI_API_KEY": "openai-test"}
+        status, payload = hd_analysis_worker.handle_trigger(environment, "Bearer wrong", "33333333-3333-4333-8333-333333333333", catalog_factory=FakeCatalog, analyzer_factory=FakeAnalyzer)
+        self.assertEqual(status, 401)
+        status, payload = hd_analysis_worker.handle_trigger(environment, "Bearer 0123456789abcdef", "33333333-3333-4333-8333-333333333333", catalog_factory=FakeCatalog, analyzer_factory=FakeAnalyzer)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(FakeCatalog.instance.claim_args[2], "33333333-3333-4333-8333-333333333333")
 
 
 if __name__ == "__main__":

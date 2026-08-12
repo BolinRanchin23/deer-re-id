@@ -1,6 +1,6 @@
 """Local returned-HD analysis worker for human profile review."""
 from __future__ import annotations
-import base64,json,os,time,urllib.error,urllib.request
+import base64,hashlib,hmac,json,os,re,time,urllib.error,urllib.request
 from typing import Any,Callable,Mapping,Optional
 from .catalog import SupabaseCatalog
 from .gate1b_worker import DEFAULT_MODEL,OPENAI_ENDPOINT,ModelUnavailable
@@ -80,10 +80,10 @@ class OpenAIHDAnalyzer:
   if len(payload)>MAX_RESPONSE_BYTES: raise ModelUnavailable("HD model response is too large")
   try: return normalize_result(json.loads(json.loads(payload)["choices"][0]["message"]["content"]))
   except (KeyError,TypeError,ValueError,json.JSONDecodeError) as exc: raise ModelUnavailable("HD model response is malformed") from exc
-def run_worker(environ:Mapping[str,str],*,catalog_factory:Callable[...,Any]=SupabaseCatalog,analyzer_factory:Callable[...,Any]=OpenAIHDAnalyzer,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic)->dict[str,Any]:
+def run_worker(environ:Mapping[str,str],*,media_asset_id:Optional[str]=None,catalog_factory:Callable[...,Any]=SupabaseCatalog,analyzer_factory:Callable[...,Any]=OpenAIHDAnalyzer,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic)->dict[str,Any]:
  if not environ.get("SUPABASE_URL") or not environ.get("SUPABASE_SECRET_KEY"): raise ValueError("Supabase configuration is required")
  if not environ.get("OPENAI_API_KEY"): raise ValueError("OpenAI configuration is required")
- catalog=catalog_factory(environ["SUPABASE_URL"],environ["SUPABASE_SECRET_KEY"],environ.get("SUPABASE_BUCKET","tactacam-photos"));catalog.set_deadline(deadline or clock()+900,clock=clock);claim=catalog.claim_hd_review(MODEL_NAME,MODEL_VERSION)
+ catalog=catalog_factory(environ["SUPABASE_URL"],environ["SUPABASE_SECRET_KEY"],environ.get("SUPABASE_BUCKET","tactacam-photos"));catalog.set_deadline(deadline or clock()+900,clock=clock);claim=catalog.claim_hd_review(MODEL_NAME,MODEL_VERSION,media_asset_id)
  if not isinstance(claim,Mapping) or not claim.get("ok"): raise RuntimeError("HD review claim failed")
  if claim.get("empty"): return {"ok":True,"empty":True,"completed":0,"failed":0}
  token=claim.get("claim_token")
@@ -93,5 +93,12 @@ def run_worker(environ:Mapping[str,str],*,catalog_factory:Callable[...,Any]=Supa
  except ModelUnavailable:
   catalog.fail_hd_review(token,"model_unavailable");return {"ok":False,"empty":False,"completed":0,"failed":1}
  return {"ok":True,"empty":False,"completed":1,"failed":0}
+def handle_trigger(environ:Mapping[str,str],authorization:Optional[str],media_asset_id:str,**kwargs:Any)->tuple[int,dict[str,Any]]:
+ secret=environ.get("HD_ANALYSIS_TRIGGER_SECRET","")
+ expected="Bearer "+secret
+ if len(secret)<16 or not isinstance(authorization,str) or not hmac.compare_digest(authorization,expected): return 401,{"ok":False,"error":"unauthorized"}
+ if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",media_asset_id or "") is None: return 400,{"ok":False,"error":"invalid asset"}
+ result=run_worker(environ,media_asset_id=media_asset_id,**kwargs)
+ return (200 if result.get("ok") else 503),result
 def main()->int: print(json.dumps(run_worker(os.environ),sort_keys=True));return 0
 if __name__=="__main__": raise SystemExit(main())

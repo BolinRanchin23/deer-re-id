@@ -37,6 +37,10 @@
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     },
+    "api/hd_analysis_trigger.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
     "api/hd_requests.py": {
       "maxDuration": 60,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
