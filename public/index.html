@@ -220,7 +220,7 @@
       .map, .map-placeholder { min-height: 60vh; }
       .integrity { grid-template-columns: 1fr; }
       .bottom-nav {
-        position: fixed; z-index: 1001; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr);
+        position: fixed; z-index: 1001; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(7, 1fr);
         padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgba(12,14,13,.96); backdrop-filter: blur(18px);
       }
       .bottom-nav .nav-button { min-height: 52px; padding: 5px 2px; display: grid; place-items: center; gap: 1px; font-size: 9px; text-align: center; }
@@ -255,6 +255,8 @@
       <nav class="nav-list">
         <button class="nav-button active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Overview</span></button>
         <button class="nav-button" data-view="review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h14v16H5zM8 9l2 2 5-5M8 15h8"/></svg><span>Review</span><span id="review-nav-count" class="count">0</span></button>
+        <button class="nav-button" data-view="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM8 9h8M8 13h8"/></svg><span>Automation audit</span></button>
+        <button class="nav-button" data-view="hdreview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM8 15l3-3 3 3 2-2 2 2"/></svg><span>Returned HD</span></button>
         <button class="nav-button" data-view="deer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 3c2 2 3 4 3 7M17 3c-2 2-3 4-3 7M5 6l4 2M19 6l-4 2M8 11c1-2 7-2 8 0 1 5-1 8-4 10-3-2-5-5-4-10Z"/></svg><span>Deer</span><span id="deer-nav-count" class="count">0</span></button>
         <button class="nav-button" data-view="cameras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16v11H4zM8 8l2-3h4l2 3M12 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg><span>Cameras</span><span id="camera-nav-count" class="count">0</span></button>
         <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span><span id="photo-nav-count" class="count">0</span></button>
@@ -303,14 +305,22 @@
       </section>
 
       <section id="view-review" class="view" data-view-panel="review" hidden>
-        <div class="view-head"><div><p class="eyebrow">Human review</p><h1>Worth a closer look?</h1><p class="view-copy">Triage low-cost cloud thumbnails before requesting HD media or assigning an identity.</p></div><div id="review-summary" class="updated">Loading queue…</div></div>
+        <div class="view-head"><div><p class="eyebrow">Human review</p><h1>Uncertain thumbnails</h1><p class="view-copy">Only cases Gemma could not route automatically remain here.</p></div><div id="review-summary" class="updated">Loading queue…</div></div>
         <div class="review-queues" role="tablist" aria-label="Gate 1B review queue">
-          <button type="button" class="active" data-review-queue="likely_male">Likely male / antlers <span class="queue-count" data-queue-count>0</span></button>
-          <button type="button" data-review-queue="uncertain">Uncertain <span class="queue-count" data-queue-count>0</span></button>
-          <button type="button" data-review-queue="female_audit">Female-only audit <span class="queue-count" data-queue-count>0</span></button>
+          <button type="button" class="active" data-review-queue="uncertain">Uncertain <span class="queue-count" data-queue-count>0</span></button>
         </div>
-        <div id="gate1b-safety" class="gate1b-safety locked">Loading Gate 1B validation state…</div>
+        <div id="gate1b-safety" class="gate1b-safety locked">Loading Gate 1B operational state…</div>
         <div id="review-stage" class="review-stage" aria-live="polite"></div>
+      </section>
+
+      <section id="view-audit" class="view" data-view-panel="audit" hidden>
+        <div class="view-head"><div><p class="eyebrow">Model accountability</p><h1>Automation audit</h1><p class="view-copy">Review filtered female-only candidates and likely-male photos that automatically triggered HD.</p></div></div>
+        <div id="automation-audit-grid" class="photo-grid"></div>
+      </section>
+
+      <section id="view-hdreview" class="view" data-view-panel="hdreview" hidden>
+        <div class="view-head"><div><p class="eyebrow">Returned HD</p><h1>Profile review</h1><p class="view-copy">Create a new season profile, match an existing profile, or reject images that are not identity-worthy.</p></div></div>
+        <div id="hd-review-stage" class="review-stage"></div>
       </section>
 
       <section id="view-deer" class="view" data-view-panel="deer" hidden>
@@ -335,11 +345,13 @@
   <nav class="bottom-nav" aria-label="Mobile workspace navigation">
     <button class="nav-button active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Overview</span></button>
     <button class="nav-button" data-view="review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h14v16H5zM8 9l2 2 5-5M8 15h8"/></svg><span>Review</span></button>
+    <button class="nav-button" data-view="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM8 9h8M8 13h8"/></svg><span>Audit</span></button>
+    <button class="nav-button" data-view="hdreview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM8 15l3-3 3 3 2-2 2 2"/></svg><span>HD</span></button>
     <button class="nav-button" data-view="deer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 3c2 2 3 4 3 7M17 3c-2 2-3 4-3 7M5 6l4 2M19 6l-4 2M8 11c1-2 7-2 8 0 1 5-1 8-4 10-3-2-5-5-4-10Z"/></svg><span>Deer</span></button>
     <button class="nav-button" data-view="cameras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16v11H4zM8 8l2-3h4l2 3M12 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg><span>Cameras</span></button>
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=10" defer></script>
+  <script src="/app.js?v=11" defer></script>
 </body>
 </html>

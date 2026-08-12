@@ -390,6 +390,29 @@ class Gate1SchemaTests(unittest.TestCase):
             sql,
         )
 
+    def test_operational_gate1b_automation_audit_and_hd_review_schema(self):
+        sql = Path(
+            "supabase/migrations/20260811235500_gate1b_operational_hd_review.sql"
+        ).read_text().lower()
+        self.assertIn("gate1b_automation_events", sql)
+        self.assertIn("gate1b_automation_labels", sql)
+        self.assertIn("hd_review_results", sql)
+        self.assertIn("hd_review_decisions", sql)
+        self.assertIn("deerid_apply_gate1b_automation", sql)
+        self.assertIn("after insert on deerid.gate1b_predictions", sql)
+        self.assertIn("triage_class = 'likely_male'", sql)
+        self.assertIn("insert into deerid.hd_requests", sql)
+        self.assertIn("triage_class = 'female_candidate'", sql)
+        self.assertIn("suppression_enabled = true", sql)
+        self.assertIn("deerid_gate1b_automation_audit", sql)
+        self.assertIn("deerid_record_gate1b_automation_label", sql)
+        self.assertIn("deerid_claim_hd_review", sql)
+        self.assertIn("deerid_complete_hd_review", sql)
+        self.assertIn("deerid_record_hd_review_decision", sql)
+        self.assertIn("deerid_hd_review_queue", sql)
+        self.assertGreaterEqual(sql.count("enable row level security"), 4)
+        self.assertGreaterEqual(sql.count("append-only"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

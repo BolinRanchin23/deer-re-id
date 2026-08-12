@@ -128,34 +128,26 @@ flowchart TD
    - The original thumbnail and returned HD object are retained as append-only `media_assets` under that identity. The HD asset does not enter thumbnail SpeciesNet/Gate 1 intake again.
    - An HD arrival queues separate quality, age, antler-score, distinguishing-attribute, embedding and re-identification stages. Those jobs are now explicit durable continuation work; model implementations beyond quality/eligibility remain future-state.
 
-### 🧪 Operational, but not yet the suppression authority
+### ✅ Operational model routing and returned-HD review
 
-**Gate 1B** runs after stable event grouping and before HD prioritization/primary review. The self-hosted base executes local `gemma4:e4b` every 15 minutes only after its full Ollama digest `c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb` matches the pinned release; mutable model-tag overrides are rejected. Every append-only prediction also stores the exact model/prompt version. The first model-assisted labeling batch is stratified across all four cameras; its outputs are provisional evidence, not human ground truth. Gate 1B produces independent outputs for:
+**Gate 1B** runs after stable event grouping and before HD retrieval. The self-hosted base executes pinned local `gemma4:e4b` every 15 minutes. By explicit owner decision, the exact pinned model now has operational routing authority even though local accuracy remains unvalidated:
 
-- `species`: whitetail, axis, other deer, non-deer or unknown;
-- `visible_antler`: yes, no or unknown;
-- `probable_male`: yes, no or unknown;
-- `head_visibility`: full, partial, none or unknown;
-- lighting domain: day/color, night/IR or unknown;
-- animal count, mixed-group status and whether every animal was assessable.
+- **Likely male:** any positive visible-antler or probable-male evidence automatically creates one replay-idempotent HD request and resolves thumbnail review.
+- **Uncertain:** partial/hidden heads, mixed groups, unassessed animals, ambiguity, malformed output or model failure remain in the primary human thumbnail queue.
+- **Female candidate:** target deer only, every animal assessable, full head visibility, and no positive male/antler evidence is filtered without an HD request.
 
-Its triage classes are:
+Every automatic request/filter is preserved in `gate1b_automation_events`, separately from the immutable prediction. The **Automation audit** workspace exposes both automatic strata. A reviewer can mark filtered images **Should have requested HD**, mark requested images **Incorrect male / antlers**, or affirm either as correct. Corrections append to a separate label ledger and never rewrite model evidence.
 
-- **Likely male:** any positive antler or probable-male evidence. One possible buck keeps the whole event.
-- **Uncertain:** partial/hidden heads, mixed groups, unassessed animals, non-target ambiguity, malformed output or model failure.
-- **Female candidate:** target species only, with every animal clearly assessed, full head visibility and no male/antler evidence.
+Returned HD is retained as a distinct immutable asset under the original capture identity. The local returned-HD worker records conservative species/sex, identity eligibility, age eligibility/class, antler-score eligibility/range, distinguishing features, and a summary. Unsupported age or score stays `unknown`. The **Returned HD** workspace is the normal future human loop: create a season profile, match an existing profile, or mark the image not identity-worthy. Human profile identity remains authoritative.
 
-A female candidate is **not the same as a confirmed female**. Positive male/antler evidence may prioritize HD and review immediately, but routine female-only suppression remains blocked on a representative local validation set, retention-recall calibration and ongoing audits. Human corrections may elevate an event into the male-priority queue, but the four correction fields alone can never suppress an event. After any future activation, both human-label inserts and matching pinned prediction inserts re-evaluate the full policy and automatically disable suppression on regression.
+The model is operational by owner-authorized override, **not because it passed the former validation gate**. Accuracy, missed bucks, and unnecessary HD requests must be measured from the append-only audit labels.
 
 ### 🧭 Planned next
 
-1. Human-label the model-assisted validation batch through the four correction controls, covering all four cameras, whitetail, axis, day/color, night/IR, mixed groups and difficult negatives.
-2. Report the labeled buck-event recall and every false-negative before considering explicit activation of bulk female-only suppression.
-3. Use the resulting labels to calibrate or train task-specific heads; the current general-purpose vision model is a conservative prioritizer, not a validated sex/species classifier.
-4. After Gate 1B’s local buck/antler HD policy is validated, automatically request the best event frame whenever pinned-model male/antler evidence crosses the approved threshold. Until then, positive model evidence prioritizes the event but does not silently trigger a billable request.
-5. After HD retrieval, run deeper per-animal detection, identity-quality assessment, age-class assistance, antler-score eligibility/estimation and open-set profile matching **before** routine human review.
-6. Present the reviewer with the verified HD image, model evidence, age/score assistance, ranked profile candidates, and explicit existing/new/unknown choices; thumbnail review becomes an exception path rather than the normal identity workflow.
-7. Add explicit technical and task gates:
+1. Accumulate automatic-routing audit labels across all cameras, species, day/color and IR, and report every missed buck and unnecessary HD request.
+2. Add reproducible per-animal crops, embeddings, and ranked open-set profile candidates to the returned-HD result; current review supports profile creation/matching but does not yet compute similarity candidates.
+3. Calibrate or replace the operational model from observed mistakes while preserving exact model/prompt lineage.
+4. Add explicit technical and task gates:
    - `identity_eligible`
    - `age_eligible`
    - `spread_eligible`

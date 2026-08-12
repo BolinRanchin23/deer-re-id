@@ -8,7 +8,9 @@ let deerProfiles = [];
 let pipeline = {};
 let gate1bMetrics = {};
 let operationalStats = {};
-let activeReviewQueue = 'likely_male';
+let automationAudit = [];
+let hdReviewQueue = [];
+let activeReviewQueue = 'uncertain';
 let mapboxToken = '';
 let cameraMap = null;
 let activeView = 'overview';
@@ -39,8 +41,7 @@ function needsReview(item) {
 
 function reviewQueueName(item) {
   const gate1b = item && item.gate1b;
-  return gate1b && ['likely_male', 'uncertain', 'female_audit'].includes(gate1b.queue)
-    ? gate1b.queue : 'uncertain';
+  return gate1b && gate1b.queue === 'uncertain' ? 'uncertain' : 'automated';
 }
 
 function belongsToActiveQueue(item) {
@@ -490,7 +491,7 @@ function renderGate1bStatus() {
   const coverage = `${n(gate1bMetrics.predictions)} model-labeled events · ${n(gate1bMetrics.prediction_cameras)}/4 cameras · ${n(gate1bMetrics.predicted_day)} day · ${n(gate1bMetrics.predicted_ir)} IR · ${n(gate1bMetrics.predicted_axis)} predicted axis`;
   target.className = 'gate1b-safety ' + (suppression_enabled ? 'enabled' : 'locked');
   target.textContent = suppression_enabled
-    ? `Female-only suppression enabled · ${coverage} · measured buck recall ${recall} · ${labels} human labels`
+    ? `Operational override active · female-only candidates filtered · likely male/antlers request HD automatically · ${coverage} · measured buck recall ${recall} · ${labels} human labels`
     : `Female-only suppression locked · ${coverage} · ${labels}/${required} human labels · buck recall ${recall}${suppression_ready ? ' · validation ready for explicit activation' : ''}`;
 }
 
@@ -576,6 +577,32 @@ function renderDeerProfiles() {
   });
 }
 
+function renderAutomationAudit() {
+  const target = $('automation-audit-grid');
+  if (!target) return;
+  target.replaceChildren();
+  automationAudit.forEach(item => {
+    const card=document.createElement('article'); card.className='card photo-card';
+    const image=document.createElement('img'); image.src=item.preview_url; image.alt='Automatically routed thumbnail'; image.loading='lazy'; image.referrerPolicy='no-referrer';
+    const meta=document.createElement('div'); meta.className='photo-meta';
+    const title=document.createElement('strong'); title.textContent=item.action==='auto_request_hd'?'HD automatically requested':'Filtered as female-only';
+    const copy=document.createElement('div'); copy.className='photo-date'; copy.textContent=`${item.camera_name||'Camera'} · ${formatDate(item.captured_at)}${item.human_verdict?` · ${item.human_verdict}`:''}`;
+    const actions=document.createElement('div'); actions.className='quick-actions';
+    const verdicts=item.action==='auto_request_hd'?[['correct','Correct'],['incorrect_male_or_antler','Incorrect male / antlers']]:[['correct','Correct'],['should_have_requested_hd','Should have requested HD']];
+    verdicts.forEach(([verdict,label])=>{const button=document.createElement('button'); button.type='button'; button.textContent=label; button.addEventListener('click',async()=>{button.disabled=true; const response=await fetch('/api/automation_label',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({automation_event_id:item.automation_event_id,verdict})}); const data=await response.json().catch(()=>({ok:false})); if(!response.ok||!data.ok){button.disabled=false;return showError('Audit label could not be saved.');} item.human_verdict=verdict; renderAutomationAudit();}); actions.appendChild(button);});
+    meta.append(title,copy,actions); card.append(image,meta); target.appendChild(card);
+  });
+  if(!automationAudit.length){const empty=document.createElement('div');empty.className='card empty';empty.textContent='No automatic routing decisions yet.';target.appendChild(empty);}
+}
+
+function renderHDReview() {
+  const target=$('hd-review-stage'); if(!target)return; target.replaceChildren();
+  hdReviewQueue.forEach(item=>{const result=item.result||{};const card=document.createElement('article');card.className='card review-card';const image=document.createElement('img');image.src=item.preview_url;image.alt='Returned HD deer photo';image.loading='lazy';image.referrerPolicy='no-referrer';const meta=document.createElement('div');meta.className='photo-meta';const heading=document.createElement('strong');heading.textContent=`${result.species||'Unknown deer'} · ${result.sex||'unknown sex'}`;const summary=document.createElement('p');summary.textContent=result.summary||'Analysis pending';const features=document.createElement('p');features.textContent=`Features: ${(result.distinguishing_features||[]).join(', ')||'none recorded'}`;const controls=document.createElement('div');controls.className='profile-assignment';const select=document.createElement('select');deerProfiles.filter(p=>Number(p.season_year)===new Date(item.captured_at).getFullYear()).forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.display_name;select.appendChild(o);});const match=document.createElement('button');match.textContent='Match existing profile';match.disabled=!select.options.length;match.onclick=()=>submitHDReviewDecision(item,{action:'match_profile',profile_id:select.value},match);const name=document.createElement('input');name.placeholder='New deer name';const create=document.createElement('button');create.textContent='Create new profile';create.onclick=()=>submitHDReviewDecision(item,{action:'create_profile',display_name:name.value,species:result.species==='axis'?'axis deer':result.species==='whitetail'?'white-tailed deer':'other deer',sex:['male','female'].includes(result.sex)?result.sex:'unknown'},create);const skip=document.createElement('button');skip.textContent='Not identity-worthy';skip.onclick=()=>submitHDReviewDecision(item,{action:'not_identity_worthy'},skip);controls.append(select,match,name,create,skip);meta.append(heading,summary,features,controls);card.append(image,meta);target.appendChild(card);});
+  if(!hdReviewQueue.length){const empty=document.createElement('div');empty.className='card empty';empty.textContent='No returned HD photos awaiting profile review.';target.appendChild(empty);}
+}
+
+async function submitHDReviewDecision(item,payload,button){button.disabled=true;const response=await fetch('/api/hd_review_decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hd_review_result_id:item.hd_review_result_id,...payload})});const data=await response.json().catch(()=>({ok:false}));if(!response.ok||!data.ok){button.disabled=false;return showError('HD profile decision could not be saved.');}hdReviewQueue=hdReviewQueue.filter(x=>x.hd_review_result_id!==item.hd_review_result_id);await fetchLibrary();}
+
 function renderCameraCards() {
   const list = $('camera-list');
   list.replaceChildren();
@@ -644,7 +671,7 @@ function loadCameraMap() {
 }
 
 function showView(name) {
-  const allowed = ['overview', 'review', 'deer', 'cameras', 'photos'];
+  const allowed = ['overview', 'review', 'audit', 'hdreview', 'deer', 'cameras', 'photos'];
   if (!allowed.includes(name)) name = 'overview';
   activeView = name;
   document.querySelectorAll('[data-view-panel]').forEach(panel => { panel.hidden = panel.dataset.viewPanel !== name; });
@@ -679,6 +706,8 @@ function updateCatalogViews(renderReviewView = true) {
   else updateReviewCounts();
   renderDeerProfiles();
   renderCameraCards();
+  renderAutomationAudit();
+  renderHDReview();
   if (activeView === 'cameras') loadCameraMap();
 }
 
@@ -692,6 +721,8 @@ async function fetchLibrary(options = {}) {
   pipeline = data.pipeline && typeof data.pipeline === 'object' ? data.pipeline : {};
   gate1bMetrics = data.gate1b && typeof data.gate1b === 'object' ? data.gate1b : {};
   operationalStats = data.stats && typeof data.stats === 'object' ? data.stats : {};
+  automationAudit = Array.isArray(data.automation_audit) ? data.automation_audit : [];
+  hdReviewQueue = Array.isArray(data.hd_review_queue) ? data.hd_review_queue : [];
   mapboxToken = typeof data.mapbox_access_token === 'string' ? data.mapbox_access_token : '';
   mergeReviewQueue(photos.filter(belongsToActiveQueue), Boolean(options.preserveReview));
   updateCatalogViews(options.renderReviewView !== false);

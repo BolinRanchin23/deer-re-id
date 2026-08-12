@@ -4,6 +4,7 @@ from pathlib import Path
 from reveal_downloader.catalog import (
     _sanitize_photos,
     handle_gate1b_label,
+    handle_automation_label,
     handle_library,
     handle_library_preview,
     handle_profile_assignment,
@@ -24,6 +25,7 @@ class MemoryCatalog:
         self.profile_created = None
         self.profile_attached = None
         self.operational_stats = None
+        self.automation_labeled = None
 
     def set_deadline(self, deadline, clock=None):
         self.deadline = deadline
@@ -134,6 +136,16 @@ class MemoryCatalog:
             "as_of": "2026-08-12T01:00:00Z",
         }
 
+    def read_automation_audit(self, limit=120):
+        return [{"automation_event_id": 8, "media_id": "11111111-1111-4111-8111-111111111111", "action": "auto_suppress_female", "captured_at": "2026-08-08T12:00:00Z", "camera_name": "North Ridge", "prediction": {"species_label": "whitetail", "visible_antler": "no", "probable_male": "no", "head_visibility": "full", "triage_class": "female_candidate", "reason": "clear antlerless deer"}, "human_verdict": None, "human_note": None}]
+
+    def read_hd_review_queue(self, limit=60):
+        return [{"hd_review_result_id": 4, "media_id": "11111111-1111-4111-8111-111111111111", "media_asset_id": "66666666-6666-4666-8666-666666666666", "model_name": "Ollama-Gemma4-Vision-HD", "model_version": "hd-v1", "captured_at": "2026-08-08T12:00:00Z", "camera_name": "North Ridge", "result": {"species": "whitetail", "sex": "male", "animal_count": 1, "identity_eligible": True, "age_eligible": False, "age_class": "unknown", "antler_score_eligible": False, "antler_score_range": "unknown", "distinguishing_features": ["split brow"], "summary": "Useful identity image"}}]
+
+    def record_automation_label(self, event_id, verdict, note=""):
+        self.automation_labeled = (event_id, verdict, note)
+        return {"ok": True, "label_id": 11}
+
     def record_gate1b_label(
         self,
         media_id,
@@ -167,6 +179,10 @@ class MemoryCatalog:
             + ".jpg",
             "content_type": "image/jpeg",
         }
+
+    def resolve_media_asset_object(self, media_asset_id):
+        self.resolved_asset = media_asset_id
+        return {"object_path": "cam@" + "a" * 64 + "/2026/08/08/20260808T120000Z_hd@" + "c" * 64 + ".jpg", "content_type": "image/jpeg"}
 
     def read_private_image(self, object_path, max_bytes):
         self.read_args = (object_path, max_bytes)
@@ -274,6 +290,17 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(payload["stats"]["photos_received_24h"], 12)
         self.assertEqual(payload["stats"]["hd_requests_24h"], 3)
         self.assertEqual(payload["stats"]["hd_available_24h"], 2)
+        self.assertEqual(payload["automation_audit"][0]["action"], "auto_suppress_female")
+        self.assertEqual(payload["hd_review_queue"][0]["result"]["identity_eligible"], True)
+        self.assertRegex(payload["automation_audit"][0]["preview_url"], r"^/api/library_preview\?token=")
+        self.assertRegex(payload["hd_review_queue"][0]["preview_url"], r"^/api/library_preview\?token=asset\.")
+        asset_token = payload["hd_review_queue"][0]["preview_url"].split("token=", 1)[1]
+        preview_status, _, preview_body = handle_library_preview(
+            self.environment(), asset_token, catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
+        )
+        self.assertEqual(preview_status, 200)
+        self.assertEqual(preview_body, b"\xff\xd8private\xff\xd9")
+        self.assertEqual(catalog.resolved_asset, "66666666-6666-4666-8666-666666666666")
         self.assertTrue(catalog.operational_stats)
         serialized = str(payload)
         self.assertNotIn("must-not-leak.jpg", serialized)
@@ -658,12 +685,16 @@ class Gate1ReviewUiTests(unittest.TestCase):
             self.assertIn(element_id, script)
         self.assertIn("Most recent 60 shown", html)
 
-    def test_gate1b_ui_has_three_queues_and_append_only_correction_controls(self):
+    def test_gate1b_ui_keeps_only_uncertain_in_primary_review_and_adds_audit_workspaces(self):
         html = Path("public/index.html").read_text()
         script = Path("public/app.js").read_text()
-        for queue in ("likely_male", "uncertain", "female_audit"):
-            self.assertIn(f'data-review-queue="{queue}"', html)
-            self.assertIn(queue, script)
+        self.assertIn('data-review-queue="uncertain"', html)
+        self.assertNotIn('data-review-queue="likely_male"', html)
+        self.assertNotIn('data-review-queue="female_audit"', html)
+        self.assertIn('data-view-panel="audit"', html)
+        self.assertIn('data-view-panel="hdreview"', html)
+        self.assertIn("/api/automation_label", script)
+        self.assertIn("/api/hd_review_decision", script)
         for field in (
             "species_label",
             "visible_antler",
@@ -680,6 +711,16 @@ class Gate1ReviewUiTests(unittest.TestCase):
         script = Path("public/app.js").read_text()
         self.assertNotIn("triage_class === 'female_candidate'", script)
         self.assertIn("gate1b.queue", script)
+    def test_automation_audit_label_is_append_only_and_action_specific(self):
+        catalog = MemoryCatalog()
+        status, payload = handle_automation_label(
+            PrivateLibraryTests.environment(), 8, "should_have_requested_hd", "missed buck",
+            catalog_factory=lambda *_: catalog,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(catalog.automation_labeled, (8, "should_have_requested_hd", "missed buck"))
+        self.assertEqual(handle_automation_label(PrivateLibraryTests.environment(), 8, "bad", catalog_factory=lambda *_: catalog)[0], 400)
 
 
 if __name__ == "__main__":

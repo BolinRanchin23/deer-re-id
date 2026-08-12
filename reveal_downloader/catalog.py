@@ -252,6 +252,30 @@ class SupabaseCatalog:
     def claim_queued_hd_request(self) -> Any:
         return self._rpc("deerid_claim_queued_hd_request", {})
 
+    def claim_hd_review(self, model_name: str, model_version: str) -> Any:
+        return self._rpc("deerid_claim_hd_review", {"p_model_name": model_name, "p_model_version": model_version})
+
+    def complete_hd_review(self, claim_token: str, model_name: str, model_version: str, result: Mapping[str, Any]) -> Any:
+        return self._rpc("deerid_complete_hd_review", {"p_claim_token": claim_token, "p_model_name": model_name, "p_model_version": model_version, "p_result": dict(result)})
+
+    def fail_hd_review(self, claim_token: str, error_category: str) -> Any:
+        return self._rpc("deerid_fail_hd_review", {"p_claim_token": claim_token, "p_error_category": error_category})
+
+    def resolve_media_asset_object(self, media_asset_id: str) -> Any:
+        return self._rpc("deerid_resolve_media_asset_object", {"p_media_asset_id": media_asset_id})
+
+    def read_automation_audit(self, limit: int = 120) -> Any:
+        return self._rpc("deerid_gate1b_automation_audit", {"p_limit": limit})
+
+    def read_hd_review_queue(self, limit: int = 60) -> Any:
+        return self._rpc("deerid_hd_review_queue", {"p_limit": limit})
+
+    def record_automation_label(self, event_id: int, verdict: str, note: str = "") -> Any:
+        return self._rpc("deerid_record_gate1b_automation_label", {"p_automation_event_id": event_id, "p_verdict": verdict, "p_note": note or None})
+
+    def record_hd_review_decision(self, result_id: int, action: str, *, profile_id: Optional[str] = None, display_name: str = "", species: str = "", sex: str = "", note: str = "") -> Any:
+        return self._rpc("deerid_record_hd_review_decision", {"p_hd_review_result_id": result_id, "p_action": action, "p_profile_id": profile_id, "p_display_name": display_name or None, "p_species": species or None, "p_sex": sex or None, "p_note": note or None})
+
     def read_gate1_pending(
         self, model_name: str, model_version: str, limit: int = 60
     ) -> Any:
@@ -318,6 +342,8 @@ def handle_library(
         )
         gate1b = _sanitize_gate1b_metrics(catalog.read_gate1b_metrics())
         stats = _sanitize_operational_stats(catalog.read_operational_stats())
+        automation_audit = _sanitize_auxiliary_media_rows(catalog.read_automation_audit(120), signing_key, current, "automation_event_id")
+        hd_review_queue = _sanitize_auxiliary_media_rows(catalog.read_hd_review_queue(60), signing_key, current, "hd_review_result_id")
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
         return 503, {"ok": False, "error": "library unavailable"}
     payload: Dict[str, Any] = {
@@ -328,6 +354,8 @@ def handle_library(
         "pipeline": pipeline,
         "gate1b": gate1b,
         "stats": stats,
+        "automation_audit": automation_audit,
+        "hd_review_queue": hd_review_queue,
     }
     mapbox_token = environ.get("NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN", "").strip()
     if _MAPBOX_TOKEN.fullmatch(mapbox_token):
@@ -346,9 +374,10 @@ def handle_library_preview(
     key = _signing_key(environ)
     current = int(time.time()) if epoch_now is None else int(epoch_now)
     media_id = _verify_media_token(token, key, current) if key is not None else None
+    asset_id = _verify_asset_token(token, key, current) if key is not None else None
     url = environ.get("SUPABASE_URL", "")
     secret = environ.get("SUPABASE_SECRET_KEY", "")
-    if media_id is None or not url or not secret:
+    if (media_id is None and asset_id is None) or not url or not secret:
         return _not_found()
     try:
         catalog = catalog_factory(
@@ -356,7 +385,7 @@ def handle_library_preview(
         )
         clock = time.monotonic
         catalog.set_deadline(clock() + LIBRARY_DEADLINE_SECONDS, clock=clock)
-        selected = catalog.resolve_media_object(media_id)
+        selected = catalog.resolve_media_asset_object(asset_id) if asset_id is not None else catalog.resolve_media_object(media_id)
         if isinstance(selected, list):
             selected = selected[0] if len(selected) == 1 else None
         object_path = (
@@ -552,6 +581,47 @@ def handle_profile_assignment(
     return 200, dict(result)
 
 
+def handle_hd_review_decision(
+    environ: Mapping[str, str], result_id: int, action: str, *, profile_id: str = "", display_name: str = "", species: str = "", sex: str = "", note: str = "", catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+) -> Tuple[int, Dict[str, Any]]:
+    if isinstance(result_id, bool) or not isinstance(result_id, int) or result_id < 1 or action not in {"create_profile", "match_profile", "not_identity_worthy", "defer"} or any(not isinstance(x, str) for x in (profile_id, display_name, species, sex, note)) or len(note) > 500:
+        return 400, {"ok": False, "error": "invalid HD review decision"}
+    if action == "match_profile" and _UUID.fullmatch(profile_id) is None:
+        return 400, {"ok": False, "error": "invalid HD review decision"}
+    url=environ.get("SUPABASE_URL",""); secret=environ.get("SUPABASE_SECRET_KEY","")
+    if not url or not secret: return 404, {"ok": False, "error": "not found"}
+    try:
+        catalog=catalog_factory(url,secret,environ.get("SUPABASE_BUCKET","tactacam-photos")); clock=time.monotonic; catalog.set_deadline(clock()+LIBRARY_DEADLINE_SECONDS,clock=clock)
+        result=catalog.record_hd_review_decision(result_id,action,profile_id=profile_id or None,display_name=display_name,species=species,sex=sex,note=note.strip())
+        if not isinstance(result,Mapping) or not result.get("ok"): raise StorageError("HD review decision failed")
+    except (AttributeError,OSError,RuntimeError,TypeError,ValueError,StorageError): return 503,{"ok":False,"error":"HD review decision unavailable"}
+    return 200,dict(result)
+
+
+def handle_automation_label(
+    environ: Mapping[str, str],
+    event_id: int,
+    verdict: str,
+    note: str = "",
+    *,
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+) -> Tuple[int, Dict[str, Any]]:
+    if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 1 or verdict not in {"correct", "should_have_requested_hd", "incorrect_male_or_antler"} or not isinstance(note, str) or len(note) > 500:
+        return 400, {"ok": False, "error": "invalid automation label"}
+    url = environ.get("SUPABASE_URL", ""); secret = environ.get("SUPABASE_SECRET_KEY", "")
+    if not url or not secret:
+        return 404, {"ok": False, "error": "not found"}
+    try:
+        catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos"))
+        clock = time.monotonic; catalog.set_deadline(clock() + LIBRARY_DEADLINE_SECONDS, clock=clock)
+        result = catalog.record_automation_label(event_id, verdict, note.strip())
+        if not isinstance(result, Mapping) or not result.get("ok"):
+            raise StorageError("Automation label failed")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
+        return 503, {"ok": False, "error": "automation label unavailable"}
+    return 200, dict(result)
+
+
 def handle_gate1b_label(
     environ: Mapping[str, str],
     token: str,
@@ -692,6 +762,38 @@ def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
                 now + LIBRARY_REVIEW_SECONDS,
                 key,
             )
+        output.append(safe)
+    return output
+
+
+def _sign_asset_token(media_asset_id: str, expires_at: int, key: bytes) -> str:
+    payload = f"asset.{media_asset_id}.{expires_at}"
+    digest = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{payload}.{digest}"
+
+
+def _verify_asset_token(token: str, key: bytes, now: int) -> Optional[str]:
+    parts = token.split(".") if isinstance(token, str) else []
+    if len(parts) != 4 or parts[0] != "asset" or _UUID.fullmatch(parts[1]) is None or not parts[2].isdigit(): return None
+    expires=int(parts[2]); expected=hmac.new(key,f"asset.{parts[1]}.{expires}".encode("ascii"),hashlib.sha256).hexdigest()
+    return parts[1] if expires >= now and hmac.compare_digest(parts[3],expected) else None
+
+
+def _sanitize_auxiliary_media_rows(value: Any, key: bytes, now: int, id_field: str) -> list[Dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > 500:
+        raise StorageError("Auxiliary review queue is unavailable")
+    output: list[Dict[str, Any]] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            raise StorageError("Auxiliary review queue is unavailable")
+        media_id = raw.get("media_id")
+        row_id = raw.get(id_field)
+        if not isinstance(media_id, str) or _UUID.fullmatch(media_id) is None or not isinstance(row_id, int) or isinstance(row_id, bool) or row_id < 1:
+            raise StorageError("Auxiliary review queue is unavailable")
+        safe = dict(raw)
+        asset_id = raw.get("media_asset_id")
+        token = _sign_asset_token(asset_id, now + LIBRARY_PREVIEW_SECONDS, key) if isinstance(asset_id, str) and _UUID.fullmatch(asset_id) else _sign_media_token(media_id, now + LIBRARY_PREVIEW_SECONDS, key)
+        safe["preview_url"] = "/api/library_preview?token=" + token
         output.append(safe)
     return output
 

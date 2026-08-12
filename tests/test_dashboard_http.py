@@ -51,7 +51,7 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn('id="workspace-shell"', html)
         self.assertNotIn("sessionStorage", html + app_js)
         self.assertNotIn("<script>", html)
-        self.assertIn('<script src="/app.js?v=10" defer></script>', html)
+        self.assertIn('<script src="/app.js?v=11" defer></script>', html)
         self.assertIn('id="photos-24h"', html)
         self.assertIn('id="hd-requests-24h"', html)
         self.assertIn('id="hd-available-24h"', html)
