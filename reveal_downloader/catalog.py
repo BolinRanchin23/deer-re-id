@@ -122,6 +122,22 @@ class SupabaseCatalog:
             },
         )
 
+    def claim_gate1b_batch(
+        self, model_name: str, model_version: str, limit: int = 10
+    ) -> Any:
+        return self._rpc(
+            "deerid_claim_gate1b_batch",
+            {"p_model_name":model_name,"p_model_version":model_version,"p_limit":max(1,min(20,int(limit)))},
+        )
+
+    def complete_gate1b_batch(
+        self, claim_token: str, model_name: str, model_version: str, results: list[dict[str, Any]]
+    ) -> Any:
+        return self._rpc(
+            "deerid_complete_gate1b_batch",
+            {"p_claim_token":claim_token,"p_model_name":model_name,"p_model_version":model_version,"p_results":results},
+        )
+
     def record_gate1b_batch(
         self, model_name: str, model_version: str, results: list[dict[str, Any]]
     ) -> Any:

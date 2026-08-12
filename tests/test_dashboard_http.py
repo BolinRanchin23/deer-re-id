@@ -83,9 +83,9 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn("One deer at a time", app_js)
         self.assertIn(".hd-context-box", html)
 
-    def test_vercel_config_sets_static_dashboard_security_headers_without_cron(self):
+    def test_vercel_config_sets_static_dashboard_security_headers_and_only_gate1b_cron(self):
         config = json.loads(Path("vercel.json").read_text(encoding="utf-8"))
-        self.assertNotIn("crons", config)
+        self.assertEqual(config["crons"],[{"path":"/api/gate1b_cron","schedule":"*/15 * * * *"}])
         self.assertIn("api/library.py", config["functions"])
         self.assertIn("api/library_preview.py", config["functions"])
         self.assertIn("api/profile_assignment.py", config["functions"])

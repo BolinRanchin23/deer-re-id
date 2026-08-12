@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hmac
 import json
 import os
 import time
@@ -68,6 +69,28 @@ SCHEMA = {
 
 class ModelUnavailable(RuntimeError):
     """The local model did not return a trustworthy structured result."""
+
+
+def handle_cron(
+    environ: Mapping[str, str],
+    authorization: Optional[str],
+    *,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[int, dict[str, Any]]:
+    secret = environ.get("CRON_SECRET", "")
+    if len(secret) < 16:
+        return 503, {"ok": False, "error": "Gate 1B cron is not configured"}
+    supplied = authorization or ""
+    if not hmac.compare_digest(supplied, "Bearer " + secret):
+        return 401, {"ok": False, "error": "unauthorized"}
+    try:
+        result = run_worker(environ, limit=10, deadline=clock() + 240.0, clock=clock)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return 503, {"ok": False, "error": "Gate 1B worker unavailable"}
+    failed = int(result.get("failed", 0))
+    if failed:
+        return 503, {"ok": False, "error": "Gate 1B batch incomplete", "failed": failed}
+    return 200, result
 
 
 class _HTTPTransport:
@@ -178,9 +201,14 @@ def run_worker(
         url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
     )
     catalog.set_deadline(deadline or (clock() + 1800), clock=clock)
-    pending = catalog.read_gate1b_pending(MODEL_NAME, MODEL_VERSION, bounded_limit)
-    if not isinstance(pending, list) or len(pending) > bounded_limit:
-        raise RuntimeError("Gate 1B pending response is invalid")
+    claim = catalog.claim_gate1b_batch(MODEL_NAME, MODEL_VERSION, bounded_limit)
+    if not isinstance(claim, Mapping) or not claim.get("ok"):
+        raise RuntimeError("Gate 1B claim response is invalid")
+    if claim.get("empty"):
+        return {"ok":True,"pending":0,"recorded":0,"failed":0,"likely_male":0,"uncertain":0,"female_candidate":0}
+    pending=claim.get("items");claim_token=claim.get("claim_token")
+    if not isinstance(pending, list) or len(pending) > bounded_limit or not isinstance(claim_token,str):
+        raise RuntimeError("Gate 1B claim response is invalid")
     analyzer = analyzer_factory(
         api_key,
         DEFAULT_MODEL,
@@ -190,7 +218,10 @@ def run_worker(
     rows: list[dict[str, Any]] = []
     counts = {"likely_male": 0, "uncertain": 0, "female_candidate": 0}
     failed_count = 0
-    for item in pending:
+    for offset,item in enumerate(pending):
+        if deadline is not None and clock() >= deadline - 30.0:
+            failed_count += len(pending) - offset
+            break
         try:
             image = catalog.read_private_image(
                 item["object_path"], max_bytes=MAX_IMAGE_BYTES
@@ -230,12 +261,12 @@ def run_worker(
                 "raw_output": prediction,
             }
         )
-    recorded = 0
-    if rows:
-        result = catalog.record_gate1b_batch(MODEL_NAME, MODEL_VERSION, rows)
-        if not isinstance(result, Mapping) or not result.get("ok"):
-            raise RuntimeError("Gate 1B predictions were not recorded")
-        recorded = int(result.get("inserted", 0))
+    result = catalog.complete_gate1b_batch(claim_token, MODEL_NAME, MODEL_VERSION, rows)
+    if not isinstance(result, Mapping) or not result.get("ok"):
+        raise RuntimeError("Gate 1B predictions were not recorded")
+    recorded=int(result.get("persisted",-1));unfinished=int(result.get("unfinished",-1))
+    if recorded != len(rows) or unfinished != failed_count:
+        raise RuntimeError("Gate 1B durable completion is incomplete")
     return {
         "ok": True,
         "pending": len(pending),
