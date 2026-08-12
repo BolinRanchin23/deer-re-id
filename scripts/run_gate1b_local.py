@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """Quiet scheduler entry point for OpenAI-backed Gate 1B vision."""
-import fcntl,json,os,subprocess,sys,tempfile
+import fcntl,json,os,subprocess,sys
 from pathlib import Path
 PROJECT_REF="vypmpmlhuqwvrxypowqa"; REPO=Path(__file__).resolve().parents[1]
-def _production_environment():
- with tempfile.TemporaryDirectory(prefix="deerid-vercel-") as temp:
-  subprocess.run(["npx","--yes","vercel@latest","env","pull",str(Path(temp)/"production.env"),"--environment=production","--yes","--scope","deer-intel-pro"],cwd=REPO,check=True,capture_output=True,text=True,timeout=60)
-  values={}
-  for line in (Path(temp)/"production.env").read_text().splitlines():
-   if line and not line.startswith("#") and "=" in line:
-    key,value=line.split("=",1); values[key]=value.strip().strip('"').replace("\\n","\n")
-  return values
+BWS=Path.home()/".hermes/profiles/deer-id-dev-bot/bin/bws"
+def _bitwarden_openai_key():
+ records=json.loads(subprocess.run([str(BWS),"secret","list","--output","json"],check=True,capture_output=True,text=True,timeout=30).stdout)
+ return next(x["value"] for x in records if x.get("key")=="OPENAI_API_KEY" and x.get("value"))
 def main():
  lock=open("/tmp/deerid-gate1b.lock","w")
  try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -18,7 +14,7 @@ def main():
  try:
   keys=subprocess.run(["supabase","projects","api-keys","--project-ref",PROJECT_REF,"--output","json"],cwd=REPO,check=True,capture_output=True,text=True,timeout=30)
   service_key=next(x["api_key"] for x in json.loads(keys.stdout) if x.get("name")=="service_role" and x.get("api_key"))
-  production=_production_environment(); openai_key=os.environ.get("OPENAI_API_KEY") or production.get("OPENAI_API_KEY")
+  openai_key=os.environ.get("OPENAI_API_KEY") or _bitwarden_openai_key()
   if not openai_key: raise RuntimeError("OPENAI_API_KEY is unavailable")
   env={**os.environ,"SUPABASE_URL":f"https://{PROJECT_REF}.supabase.co","SUPABASE_SECRET_KEY":service_key,"SUPABASE_BUCKET":"tactacam-photos","OPENAI_API_KEY":openai_key}
   done=subprocess.run([sys.executable,"-m","reveal_downloader.gate1b_worker","--limit","20"],cwd=REPO,env=env,check=True,capture_output=True,text=True,timeout=900)
