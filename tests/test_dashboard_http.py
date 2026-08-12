@@ -64,7 +64,9 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn("Create new deer profile", app_js)
         self.assertIn("Add photo to profile", app_js)
         self.assertIn("/api/profile_assignment", app_js)
-        self.assertIn("grid-template-columns:repeat(3,1fr)", "".join(html.split()))
+        compact_html = "".join(html.split())
+        self.assertIn("grid-template-columns:repeat(3,1fr)", compact_html)
+        self.assertIn(".profile-create-rowinput,.profile-create-rowbutton{grid-column:1/-1", compact_html)
 
     def test_vercel_config_sets_static_dashboard_security_headers_without_cron(self):
         config = json.loads(Path("vercel.json").read_text(encoding="utf-8"))

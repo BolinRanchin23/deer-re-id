@@ -149,8 +149,8 @@
     .profile-assignment { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
     .profile-assignment > strong { font-size: 12px !important; }
     .profile-assignment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
-    .profile-create-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(2, auto); gap: 7px; }
-    .profile-create-row button { grid-column: 1 / -1; }
+    .profile-create-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .profile-create-row input, .profile-create-row button { grid-column: 1 / -1; }
     .profile-assignment input, .profile-assignment select, .profile-assignment button { min-height: 38px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel-2); font-size: 11px; }
     .profile-assignment button { color: var(--moss-bright); cursor: pointer; }
     .profile-assignment button:disabled { color: var(--faint); cursor: not-allowed; }
