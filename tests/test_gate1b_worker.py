@@ -36,7 +36,10 @@ class FakeCatalog:
 
 
 class FakeAnalyzer:
+    instance = None
+
     def __init__(self, endpoint, model, deadline, clock):
+        type(self).instance = self
         self.args = (endpoint, model, deadline)
 
     def analyze(self, image):
@@ -60,6 +63,7 @@ class Gate1BWorkerTests(unittest.TestCase):
             {
                 "SUPABASE_URL": "https://project.supabase.co",
                 "SUPABASE_SECRET_KEY": "secret",
+                "GATE1B_OLLAMA_MODEL": "mutable-or-wrong:model",
             },
             limit=4,
             catalog_factory=FakeCatalog,
@@ -82,6 +86,9 @@ class Gate1BWorkerTests(unittest.TestCase):
         self.assertEqual(rows[0]["triage_class"], "likely_male")
         self.assertEqual(rows[0]["species_label"], "axis")
         self.assertEqual(rows[0]["gate1_assessment_id"], 17)
+        analyzer = FakeAnalyzer.instance
+        self.assertIsNotNone(analyzer)
+        self.assertEqual(analyzer.args[1], gate1b_worker.DEFAULT_MODEL)
 
     def test_model_failure_is_not_persisted_as_a_model_prediction_and_remains_retryable(
         self,
@@ -126,6 +133,20 @@ class Gate1BWorkerTests(unittest.TestCase):
             def request(
                 self, method, url, *, headers, body, timeout, max_response_bytes
             ):
+                if url.endswith("/api/tags"):
+                    return (
+                        200,
+                        json.dumps(
+                            {
+                                "models": [
+                                    {
+                                        "name": gate1b_worker.DEFAULT_MODEL,
+                                        "digest": gate1b_worker.MODEL_DIGEST,
+                                    }
+                                ]
+                            }
+                        ).encode(),
+                    )
                 self.body = json.loads(body)
                 return 200, response
 
@@ -137,6 +158,34 @@ class Gate1BWorkerTests(unittest.TestCase):
         self.assertEqual(prediction["species"], "whitetail")
         self.assertEqual(transport.body["options"]["temperature"], 0)
         self.assertFalse(transport.body["stream"])
+
+    def test_ollama_client_rejects_mutable_tag_when_digest_does_not_match(self):
+        class WrongDigestTransport:
+            def request(
+                self, method, url, *, headers, body, timeout, max_response_bytes
+            ):
+                return (
+                    200,
+                    json.dumps(
+                        {
+                            "models": [
+                                {
+                                    "name": gate1b_worker.DEFAULT_MODEL,
+                                    "digest": "0" * 64,
+                                }
+                            ]
+                        }
+                    ).encode(),
+                )
+
+        with self.assertRaisesRegex(
+            gate1b_worker.ModelUnavailable, "digest is not pinned"
+        ):
+            gate1b_worker.OllamaVisionClient(
+                "http://127.0.0.1:11434",
+                gate1b_worker.DEFAULT_MODEL,
+                transport=WrongDigestTransport(),
+            )
 
 
 if __name__ == "__main__":

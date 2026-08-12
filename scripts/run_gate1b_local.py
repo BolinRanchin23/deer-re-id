@@ -13,6 +13,18 @@ PROJECT_REF = "vypmpmlhuqwvrxypowqa"
 PROJECT_URL = f"https://{PROJECT_REF}.supabase.co"
 REPO = Path(__file__).resolve().parents[1]
 MODEL = "gemma4:e4b"
+MODEL_DIGEST = "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb"
+
+
+def has_pinned_model(tags: object) -> bool:
+    if not isinstance(tags, dict) or not isinstance(tags.get("models"), list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("name") == MODEL
+        and item.get("digest") == MODEL_DIGEST
+        for item in tags["models"]
+    )
 
 
 def main() -> int:
@@ -27,13 +39,10 @@ def main() -> int:
             "http://127.0.0.1:11434/api/tags", timeout=5
         ) as response:
             tags = json.load(response)
-        names = {
-            item.get("name")
-            for item in tags.get("models", [])
-            if isinstance(item, dict)
-        }
-        if MODEL not in names:
-            raise RuntimeError(f"required local model {MODEL} is unavailable")
+        if not has_pinned_model(tags):
+            raise RuntimeError(
+                f"required local model {MODEL}@{MODEL_DIGEST} is unavailable"
+            )
 
         keys = subprocess.run(
             [

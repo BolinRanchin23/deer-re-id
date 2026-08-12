@@ -20,6 +20,7 @@ from .catalog import (
 from .gate1b import normalize_prediction, triage_prediction
 
 DEFAULT_MODEL = "gemma4:e4b"
+MODEL_DIGEST = "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb"
 DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
@@ -114,13 +115,41 @@ class OllamaVisionClient:
             raise ValueError("Ollama endpoint must be local loopback HTTP")
         if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
             raise ValueError("Ollama endpoint is invalid")
-        if not model or len(model) > 120:
-            raise ValueError("Ollama model is invalid")
+        if model != DEFAULT_MODEL:
+            raise ValueError("Ollama model must be the pinned model tag")
         self.endpoint = endpoint.rstrip("/")
         self.model = model
         self.deadline = deadline
         self.clock = clock
         self.transport = transport or _HTTPTransport()
+        timeout = 30.0
+        if deadline is not None:
+            timeout = min(timeout, max(1.0, deadline - clock()))
+        status, body = self.transport.request(
+            "GET",
+            f"{self.endpoint}/api/tags",
+            headers={"Accept": "application/json"},
+            body=b"",
+            timeout=timeout,
+            max_response_bytes=MAX_RESPONSE_BYTES,
+        )
+        try:
+            models = json.loads(body.decode("utf-8")).get("models", [])
+            digest = next(
+                item.get("digest")
+                for item in models
+                if item.get("name") == DEFAULT_MODEL
+            )
+        except (
+            AttributeError,
+            StopIteration,
+            TypeError,
+            ValueError,
+            UnicodeDecodeError,
+        ):
+            digest = None
+        if status != 200 or digest != MODEL_DIGEST:
+            raise ModelUnavailable("local model digest is not pinned")
 
     def analyze(self, image: bytes) -> dict[str, Any]:
         if not image or len(image) > MAX_IMAGE_BYTES:
@@ -186,7 +215,7 @@ def run_worker(
         raise RuntimeError("Gate 1B pending response is invalid")
     analyzer = analyzer_factory(
         environ.get("GATE1B_OLLAMA_URL", DEFAULT_ENDPOINT),
-        environ.get("GATE1B_OLLAMA_MODEL", DEFAULT_MODEL),
+        DEFAULT_MODEL,
         deadline,
         clock,
     )

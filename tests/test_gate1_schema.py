@@ -316,6 +316,16 @@ class Gate1SchemaTests(unittest.TestCase):
         ):
             self.assertIn(floor, sql)
 
+    def test_prediction_inserts_recheck_and_disable_suppression(self):
+        sql = (
+            Path("supabase/migrations/20260811232000_gate1b_prediction_fail_closed.sql")
+            .read_text()
+            .lower()
+        )
+        self.assertIn("after insert on deerid.gate1b_predictions", sql)
+        self.assertIn("gate1b_recheck_suppression", sql)
+        self.assertIn("set suppression_enabled = false", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

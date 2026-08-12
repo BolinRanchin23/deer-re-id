@@ -135,7 +135,7 @@ flowchart TD
 
 ### 🧪 Operational, but not yet the suppression authority
 
-**Gate 1B** runs after stable event grouping and before HD prioritization/primary review. The self-hosted base executes the pinned local `gemma4:e4b` vision model every 15 minutes and stores an exact model/prompt version with every append-only prediction. The first model-assisted labeling batch is stratified across all four cameras; its outputs are provisional evidence, not human ground truth. Gate 1B produces independent outputs for:
+**Gate 1B** runs after stable event grouping and before HD prioritization/primary review. The self-hosted base executes local `gemma4:e4b` every 15 minutes only after its full Ollama digest `c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb` matches the pinned release; mutable model-tag overrides are rejected. Every append-only prediction also stores the exact model/prompt version. The first model-assisted labeling batch is stratified across all four cameras; its outputs are provisional evidence, not human ground truth. Gate 1B produces independent outputs for:
 
 - `species`: whitetail, axis, other deer, non-deer or unknown;
 - `visible_antler`: yes, no or unknown;
@@ -150,7 +150,7 @@ Its triage classes are:
 - **Uncertain:** partial/hidden heads, mixed groups, unassessed animals, non-target ambiguity, malformed output or model failure.
 - **Female candidate:** target species only, with every animal clearly assessed, full head visibility and no male/antler evidence.
 
-A female candidate is **not the same as a confirmed female**. Positive male/antler evidence may prioritize HD and review immediately, but routine female-only suppression remains blocked on a representative local validation set, retention-recall calibration and ongoing audits. Human corrections may elevate an event into the male-priority queue, but the four correction fields alone can never suppress an event.
+A female candidate is **not the same as a confirmed female**. Positive male/antler evidence may prioritize HD and review immediately, but routine female-only suppression remains blocked on a representative local validation set, retention-recall calibration and ongoing audits. Human corrections may elevate an event into the male-priority queue, but the four correction fields alone can never suppress an event. After any future activation, both human-label inserts and matching pinned prediction inserts re-evaluate the full policy and automatically disable suppression on regression.
 
 ### 🧭 Planned next
 
