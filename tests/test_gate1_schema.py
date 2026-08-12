@@ -369,6 +369,27 @@ class Gate1SchemaTests(unittest.TestCase):
         self.assertIn("grant execute on function public.deerid_create_profile_from_review", sql)
         self.assertIn("grant execute on function public.deerid_attach_media_to_profile_from_review", sql)
 
+    def test_hd_assets_remain_linked_and_continue_into_hd_analysis(self):
+        sql = Path(
+            "supabase/migrations/20260811235000_hd_assets_and_live_stats.sql"
+        ).read_text(encoding="utf-8").lower()
+        self.assertIn("create table deerid.media_assets", sql)
+        self.assertIn("media_id uuid not null references deerid.media", sql)
+        self.assertIn("unique (media_id, variant, object_path)", sql)
+        self.assertIn("create table deerid.hd_analysis_jobs", sql)
+        for stage in ("quality", "age", "antler_score", "attributes", "embedding", "reid"):
+            self.assertIn(f"'{stage}'", sql)
+        self.assertIn("after insert or update of variant, object_path", sql)
+        self.assertIn("new.variant = 'cloud_hd' or new.hd_photo is true", sql)
+        self.assertIn("deerid_operational_stats", sql)
+        self.assertIn("photos_received_24h", sql)
+        self.assertIn("hd_requests_24h", sql)
+        self.assertIn("hd_available_24h", sql)
+        self.assertIn(
+            "grant execute on function public.deerid_operational_stats() to service_role",
+            sql,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

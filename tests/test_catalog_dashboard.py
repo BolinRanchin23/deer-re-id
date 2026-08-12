@@ -23,6 +23,7 @@ class MemoryCatalog:
         self.hd_unknown = None
         self.profile_created = None
         self.profile_attached = None
+        self.operational_stats = None
 
     def set_deadline(self, deadline, clock=None):
         self.deadline = deadline
@@ -122,6 +123,15 @@ class MemoryCatalog:
             "minimum_labels": 100,
             "minimum_buck_events": 20,
             "required_buck_recall": 0.99,
+        }
+
+    def read_operational_stats(self):
+        self.operational_stats = True
+        return {
+            "photos_received_24h": 12,
+            "hd_requests_24h": 3,
+            "hd_available_24h": 2,
+            "as_of": "2026-08-12T01:00:00Z",
         }
 
     def record_gate1b_label(
@@ -261,6 +271,10 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(payload["pipeline"]["total_thumbnails"], 100)
         self.assertEqual(payload["pipeline"]["review_representatives"], 60)
         self.assertEqual(payload["pipeline"]["model_name"], "SpeciesNet")
+        self.assertEqual(payload["stats"]["photos_received_24h"], 12)
+        self.assertEqual(payload["stats"]["hd_requests_24h"], 3)
+        self.assertEqual(payload["stats"]["hd_available_24h"], 2)
+        self.assertTrue(catalog.operational_stats)
         serialized = str(payload)
         self.assertNotIn("must-not-leak.jpg", serialized)
         self.assertNotIn("SUPABASE_SECRET_KEY", serialized)

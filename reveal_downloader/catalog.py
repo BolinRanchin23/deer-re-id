@@ -105,6 +105,9 @@ class SupabaseCatalog:
     def read_gate1b_metrics(self) -> Any:
         return self._rpc("deerid_gate1b_metrics", {})
 
+    def read_operational_stats(self) -> Any:
+        return self._rpc("deerid_operational_stats", {})
+
     def read_gate1b_pending(
         self, model_name: str, model_version: str, limit: int = 20
     ) -> Any:
@@ -314,6 +317,7 @@ def handle_library(
             catalog.read_gate1_funnel(GATE1_MODEL_NAME, GATE1_MODEL_VERSION)
         )
         gate1b = _sanitize_gate1b_metrics(catalog.read_gate1b_metrics())
+        stats = _sanitize_operational_stats(catalog.read_operational_stats())
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
         return 503, {"ok": False, "error": "library unavailable"}
     payload: Dict[str, Any] = {
@@ -323,6 +327,7 @@ def handle_library(
         "profiles": profiles,
         "pipeline": pipeline,
         "gate1b": gate1b,
+        "stats": stats,
     }
     mapbox_token = environ.get("NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN", "").strip()
     if _MAPBOX_TOKEN.fullmatch(mapbox_token):
@@ -779,6 +784,22 @@ def _sanitize_pipeline(value: Any) -> Dict[str, Any]:
         != output["total_thumbnails"]
     ):
         raise StorageError("Gate 1 funnel is unavailable")
+    return output
+
+
+def _sanitize_operational_stats(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise StorageError("Operational statistics are unavailable")
+    output: Dict[str, Any] = {}
+    for field in ("photos_received_24h", "hd_requests_24h", "hd_available_24h"):
+        count = value.get(field)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise StorageError("Operational statistics are unavailable")
+        output[field] = count
+    as_of = value.get("as_of")
+    if not isinstance(as_of, str) or not as_of:
+        raise StorageError("Operational statistics are unavailable")
+    output["as_of"] = as_of
     return output
 
 

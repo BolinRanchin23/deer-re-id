@@ -273,6 +273,11 @@
           <article class="card metric"><div class="metric-label">Cameras reporting</div><div id="camera-count" class="metric-value">—</div><div class="metric-detail">Latest mapped cameras</div></article>
           <article class="card metric"><div class="metric-label">Archive health</div><div id="health" class="metric-value">—</div><div id="health-detail" class="metric-detail">Reading durable status</div></article>
         </div>
+        <section class="section"><div class="section-head"><div><h2>Last 24 hours</h2><p class="section-copy">Live database counts, recalculated whenever the workspace loads.</p></div></div><div class="metrics">
+          <article class="card metric"><div class="metric-label">Photos received</div><div id="photos-24h" class="metric-value">—</div><div class="metric-detail">New provider captures cataloged</div></article>
+          <article class="card metric"><div class="metric-label">HD photos requested</div><div id="hd-requests-24h" class="metric-value">—</div><div class="metric-detail">Human-approved Reveal requests</div></article>
+          <article class="card metric"><div class="metric-label">HD photos available</div><div id="hd-available-24h" class="metric-value">—</div><div class="metric-detail">Linked HD assets received</div></article>
+        </div></section>
         <section class="section"><div class="section-head"><div><h2>Gate 1 narrowing</h2><p id="pipeline-model" class="section-copy">Loading model pipeline…</p></div></div>
           <div class="funnel">
             <article class="card funnel-stage"><div><div class="funnel-step">01 · Archive</div><div id="pipeline-total" class="funnel-value">—</div></div><div class="funnel-label">Cloud thumbnails retained</div></article>
@@ -335,6 +340,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=9" defer></script>
+  <script src="/app.js?v=10" defer></script>
 </body>
 </html>

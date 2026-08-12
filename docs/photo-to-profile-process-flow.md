@@ -118,12 +118,15 @@ flowchart TD
    - **Add photo to profile:** appends an immutable assignment event to a compatible capture-year profile. `animal_media` is only the current relationship projection; every prior model/import/human state and actor is preserved in the append-only assignment ledger before that projection changes.
    - Decisions and profile writes are tied to a specific Gate 1 assessment and review version. Fresh items lazily initialize that state, while stale browser actions cannot overwrite a newer decision.
 
-4. **HD request and retrieval state machine**
+4. **HD request, retrieval, and continuation state machine**
    - States: `queued → requesting → submitted → available`, with `failed`, `unknown` and `cancelled` side states.
    - A request token fences each provider call and prevents stale workers from finalizing newer work.
    - Only an explicit, structurally valid Reveal acknowledgement becomes `submitted`.
    - An ambiguous provider outcome becomes `unknown` and is **not automatically replayed**, avoiding duplicate billable requests.
    - A later catalog sync reconciles `submitted`, `unknown` or other pending states when Reveal reports `hdPhoto=true`.
+   - Reveal’s stable provider photo ID keeps the HD response on the original `media.id`, so its Gate 1 assessment, human review, event and profile evidence remain connected.
+   - The original thumbnail and returned HD object are retained as append-only `media_assets` under that identity. The HD asset does not enter thumbnail SpeciesNet/Gate 1 intake again.
+   - An HD arrival queues separate quality, age, antler-score, distinguishing-attribute, embedding and re-identification stages. Those jobs are now explicit durable continuation work; model implementations beyond quality/eligibility remain future-state.
 
 ### 🧪 Operational, but not yet the suppression authority
 

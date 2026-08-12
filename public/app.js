@@ -7,6 +7,7 @@ let cameras = [];
 let deerProfiles = [];
 let pipeline = {};
 let gate1bMetrics = {};
+let operationalStats = {};
 let activeReviewQueue = 'likely_male';
 let mapboxToken = '';
 let cameraMap = null;
@@ -665,6 +666,10 @@ function updateCatalogViews(renderReviewView = true) {
   $('deer-nav-count').textContent = profiles.length;
   $('camera-nav-count').textContent = cameras.length;
   $('photo-nav-count').textContent = total;
+  const stats = operationalStats;
+  $('photos-24h').textContent = n(stats.photos_received_24h);
+  $('hd-requests-24h').textContent = n(stats.hd_requests_24h);
+  $('hd-available-24h').textContent = n(stats.hd_available_24h);
   renderPipeline();
   renderGate1bStatus();
   renderPhotoGrid($('recent-photos'), photos.slice(0, 8), {emptyTitle: 'No cataloged photos yet'});
@@ -686,6 +691,7 @@ async function fetchLibrary(options = {}) {
   deerProfiles = Array.isArray(data.profiles) ? data.profiles : [];
   pipeline = data.pipeline && typeof data.pipeline === 'object' ? data.pipeline : {};
   gate1bMetrics = data.gate1b && typeof data.gate1b === 'object' ? data.gate1b : {};
+  operationalStats = data.stats && typeof data.stats === 'object' ? data.stats : {};
   mapboxToken = typeof data.mapbox_access_token === 'string' ? data.mapbox_access_token : '';
   mergeReviewQueue(photos.filter(belongsToActiveQueue), Boolean(options.preserveReview));
   updateCatalogViews(options.renderReviewView !== false);
