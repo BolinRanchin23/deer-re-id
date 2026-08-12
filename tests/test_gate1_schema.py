@@ -349,6 +349,26 @@ class Gate1SchemaTests(unittest.TestCase):
             )
             self.assertIn(f"grant execute on function {signature} to service_role", sql)
 
+    def test_profile_assignment_corrective_migration_is_fresh_safe_auditable_and_idempotent(self):
+        sql = (
+            Path("supabase/migrations/20260811234000_profile_assignment_hardening.sql")
+            .read_text()
+            .lower()
+        )
+        self.assertIn("create table deerid.profile_assignment_events", sql)
+        self.assertIn("profile_assignment_events_are_append_only", sql)
+        self.assertIn("prior_snapshot", sql)
+        self.assertIn("resulting_snapshot", sql)
+        self.assertIn("insert into deerid.gate1_review_state", sql)
+        self.assertIn("on conflict (gate1_assessment_id) do nothing", sql)
+        self.assertIn("pg_advisory_xact_lock", sql)
+        self.assertIn("'created', false", sql)
+        self.assertIn("unique (animal_profile_id, media_id, gate1_assessment_id, review_version, action)", sql)
+        self.assertGreaterEqual(sql.count("on delete restrict"), 3)
+        self.assertIn("alter table deerid.profile_assignment_events enable row level security", sql)
+        self.assertIn("grant execute on function public.deerid_create_profile_from_review", sql)
+        self.assertIn("grant execute on function public.deerid_attach_media_to_profile_from_review", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

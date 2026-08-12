@@ -114,9 +114,9 @@ flowchart TD
    - **Not useful:** resolves the review without deleting the archived media.
    - **Defer:** leaves the item unresolved so it can be reviewed later.
    - Quick actions render immediately beside/below the current image; editable model attributes and profile controls remain below them so routine review does not require scrolling away from the photo.
-   - **Create new deer profile:** creates a long-lived animal plus the capture-year appearance profile and appends the current image as human-confirmed evidence.
-   - **Add photo to profile:** appends the current image to a compatible existing capture-year profile without overwriting previous assignments.
-   - Decisions and profile writes are tied to a specific Gate 1 assessment and review version so stale browser actions cannot overwrite a newer decision.
+   - **Create new deer profile:** idempotently creates a long-lived animal plus the capture-year appearance profile and appends the current image as human-confirmed evidence; retries return the same profile.
+   - **Add photo to profile:** appends an immutable assignment event to a compatible capture-year profile. `animal_media` is only the current relationship projection; every prior model/import/human state and actor is preserved in the append-only assignment ledger before that projection changes.
+   - Decisions and profile writes are tied to a specific Gate 1 assessment and review version. Fresh items lazily initialize that state, while stale browser actions cannot overwrite a newer decision.
 
 4. **HD request and retrieval state machine**
    - States: `queued → requesting → submitted → available`, with `failed`, `unknown` and `cancelled` side states.

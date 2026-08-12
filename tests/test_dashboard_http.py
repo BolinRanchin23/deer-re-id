@@ -51,7 +51,7 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn('id="workspace-shell"', html)
         self.assertNotIn("sessionStorage", html + app_js)
         self.assertNotIn("<script>", html)
-        self.assertIn('<script src="/app.js?v=8" defer></script>', html)
+        self.assertIn('<script src="/app.js?v=9" defer></script>', html)
         self.assertNotIn("GOOGLE_MAPS_BROWSER_KEY", html)
 
     def test_mobile_review_places_consolidated_quick_actions_beside_the_photo(self):

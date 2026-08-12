@@ -212,7 +212,11 @@ async function submitProfileAssignment(item, payload, button) {
     });
     const data = await response.json().catch(() => ({ok: false}));
     if (!response.ok || !data.ok) throw new Error('The deer profile could not be updated.');
-    button.textContent = payload.action === 'create' ? 'Profile created' : 'Photo added';
+    if (payload.action === 'create') {
+      button.textContent = data.created === false ? 'Profile already exists' : 'Profile created';
+    } else {
+      button.textContent = 'Photo added';
+    }
     await fetchLibrary({preserveReview: true});
   } catch (error) {
     button.disabled = false;
