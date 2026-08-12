@@ -45,8 +45,10 @@ from deerid.hd_review_results r
 where not exists(select 1 from deerid.hd_animal_instances i where i.hd_review_result_id=r.id);
 
 alter table deerid.hd_review_decisions add column hd_animal_instance_id uuid references deerid.hd_animal_instances(id) on delete restrict;
+drop trigger hd_review_decisions_append_only on deerid.hd_review_decisions;
 update deerid.hd_review_decisions d set hd_animal_instance_id=i.id
 from deerid.hd_animal_instances i where i.hd_review_result_id=d.hd_review_result_id and i.instance_index=1 and d.hd_animal_instance_id is null;
+create trigger hd_review_decisions_append_only before update or delete on deerid.hd_review_decisions for each row execute function deerid.reject_hd_review_mutation();
 alter table deerid.hd_review_decisions alter column hd_animal_instance_id set not null;
 drop index if exists deerid.hd_review_decisions_final_once_idx;
 create unique index hd_review_decisions_final_once_idx on deerid.hd_review_decisions(hd_animal_instance_id) where action <> 'defer';
