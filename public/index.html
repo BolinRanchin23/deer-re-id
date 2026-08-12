@@ -169,7 +169,9 @@
     @keyframes review-exit-left { to { opacity: 0; transform: translateX(-80px); } }
     .deer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .deer-card { overflow: hidden; }
-    .deer-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+    .deer-card > img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+    .profile-thumbnail-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; padding: 3px; background: #090a09; }
+    .profile-thumbnail-strip img { width: 100%; aspect-ratio: 1; display: block; object-fit: cover; border-radius: 6px; }
     .deer-card .photo-meta { min-height: 88px; }
     .integrity { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .integrity-card { padding: 16px; display: flex; align-items: center; justify-content: space-between; }
@@ -360,6 +362,6 @@
     <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
   </nav>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=12" defer></script>
+  <script src="/app.js?v=13" defer></script>
 </body>
 </html>

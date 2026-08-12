@@ -518,6 +518,7 @@ function collectProfiles() {
     name: profile.display_name || 'Named deer',
     seasonYear: profile.season_year,
     photoCount: n(profile.photo_count),
+    previewUrls: Array.isArray(profile.preview_urls) ? profile.preview_urls.slice(0, 5) : [],
     photos: []
   }));
   photos.forEach(item => photoAnimals(item).forEach(animal => {
@@ -555,13 +556,19 @@ function renderDeerProfiles() {
     const item = profile.photos[0];
     const card = document.createElement('article');
     card.className = 'card deer-card';
-    if (item) {
-      const image = document.createElement('img');
-      image.src = item.preview_url;
-      image.alt = `Profile photo for ${profile.name}`;
-      image.loading = 'lazy';
-      image.referrerPolicy = 'no-referrer';
-      card.appendChild(image);
+    const previewUrls = (profile.previewUrls || []).slice(0, 5);
+    if (previewUrls.length) {
+      const strip = document.createElement('div');
+      strip.className = 'profile-thumbnail-strip';
+      previewUrls.forEach((url, index) => {
+        const image = document.createElement('img');
+        image.src = url;
+        image.alt = `${profile.name} confirmed photo ${index + 1}`;
+        image.loading = 'lazy';
+        image.referrerPolicy = 'no-referrer';
+        strip.appendChild(image);
+      });
+      card.appendChild(strip);
     }
     const meta = document.createElement('div');
     meta.className = 'photo-meta';
@@ -597,7 +604,7 @@ function renderAutomationAudit() {
 
 function renderHDReview() {
   const target=$('hd-review-stage'); if(!target)return; target.replaceChildren();
-  hdReviewQueue.forEach(item=>{const result=item.result||{};const card=document.createElement('article');card.className='card hd-review-card';const image=document.createElement('img');image.className='hd-review-image';image.src=item.preview_url;image.alt='Returned HD deer photo';image.loading='lazy';image.referrerPolicy='no-referrer';const meta=document.createElement('div');meta.className='photo-meta';const heading=document.createElement('strong');heading.textContent=`${result.species||'Unknown deer'} · ${result.sex||'unknown sex'}`;const summary=document.createElement('p');summary.textContent=result.summary||'Analysis pending';const features=document.createElement('p');features.textContent=`Features: ${(result.distinguishing_features||[]).join(', ')||'none recorded'}`;const controls=document.createElement('div');controls.className='profile-assignment';const select=document.createElement('select');deerProfiles.filter(p=>Number(p.season_year)===new Date(item.captured_at).getFullYear()).forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.display_name;select.appendChild(o);});const match=document.createElement('button');match.textContent='Match existing profile';match.disabled=!select.options.length;match.onclick=()=>submitHDReviewDecision(item,{action:'match_profile',profile_id:select.value},match);const name=document.createElement('input');name.placeholder='New deer name';const create=document.createElement('button');create.textContent='Create new profile';create.onclick=()=>submitHDReviewDecision(item,{action:'create_profile',display_name:name.value,species:result.species==='axis'?'axis deer':result.species==='whitetail'?'white-tailed deer':'other deer',sex:['male','female'].includes(result.sex)?result.sex:'unknown'},create);const skip=document.createElement('button');skip.textContent='Not identity-worthy';skip.onclick=()=>submitHDReviewDecision(item,{action:'not_identity_worthy'},skip);controls.append(select,match,name,create,skip);meta.append(heading,summary,features,controls);card.append(image,meta);target.appendChild(card);});
+  hdReviewQueue.forEach(item=>{const result=item.result||{};const card=document.createElement('article');card.className='card hd-review-card';const image=document.createElement('img');image.className='hd-review-image';image.src=item.preview_url;image.alt='Returned HD deer photo';image.loading='lazy';image.referrerPolicy='no-referrer';const meta=document.createElement('div');meta.className='photo-meta';const heading=document.createElement('strong');heading.textContent=`${result.species||'Unknown deer'} · ${result.sex||'unknown sex'}`;const summary=document.createElement('p');summary.textContent=result.summary||'Analysis pending';const ageCues=(result.age_cues||[]).join(', ')||'not assessable';const details=document.createElement('p');details.textContent=`View: ${result.view_angle||'unknown'} · visible tines L/R: ${result.visible_tines_left??'—'}/${result.visible_tines_right??'—'} · ${result.tine_count_limitations||'visibility limitations not recorded'} · Antlers: ${result.antler_structure||'not described'} · Age: ${result.age_class||'unknown'} (${ageCues})`;const controls=document.createElement('div');controls.className='profile-assignment';const select=document.createElement('select');deerProfiles.filter(p=>Number(p.season_year)===new Date(item.captured_at).getFullYear()).forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.display_name;select.appendChild(o);});const match=document.createElement('button');match.textContent='Match existing profile';match.disabled=!select.options.length;match.onclick=()=>submitHDReviewDecision(item,{action:'match_profile',profile_id:select.value},match);const name=document.createElement('input');name.placeholder='New deer name';const create=document.createElement('button');create.textContent='Create new profile';create.onclick=()=>submitHDReviewDecision(item,{action:'create_profile',display_name:name.value,species:result.species==='axis'?'axis deer':result.species==='whitetail'?'white-tailed deer':'other deer',sex:['male','female'].includes(result.sex)?result.sex:'unknown'},create);const skip=document.createElement('button');skip.textContent='Not identity-worthy';skip.onclick=()=>submitHDReviewDecision(item,{action:'not_identity_worthy'},skip);controls.append(select,match,name,create,skip);meta.append(heading,summary,details,controls);card.append(image,meta);target.appendChild(card);});
   if(!hdReviewQueue.length){const empty=document.createElement('div');empty.className='card empty';empty.textContent='No returned HD photos awaiting profile review.';target.appendChild(empty);}
 }
 

@@ -712,6 +712,17 @@ class Gate1ReviewUiTests(unittest.TestCase):
         script = Path("public/app.js").read_text()
         self.assertNotIn("triage_class === 'female_candidate'", script)
         self.assertIn("gate1b.queue", script)
+    def test_profile_cards_receive_up_to_five_recent_or_highlighted_previews(self):
+        migration = Path("supabase/migrations/20260812002000_profile_previews_and_hd_field_summary.sql")
+        self.assertTrue(migration.exists())
+        sql = migration.read_text()
+        self.assertIn("deerid_profiles", sql)
+        self.assertIn("profile_previews", sql)
+        self.assertIn("limit 5", sql.lower())
+        script = Path("public/app.js").read_text()
+        self.assertIn("profile.preview_urls", script)
+        self.assertIn("profile-thumbnail-strip", script)
+
     def test_returned_hd_uses_full_frame_contain_rendering(self):
         html = Path("public/index.html").read_text()
         script = Path("public/app.js").read_text()

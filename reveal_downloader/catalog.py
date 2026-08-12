@@ -336,7 +336,7 @@ def handle_library(
             catalog.read_library(MAX_LIBRARY_PHOTOS), signing_key, current
         )
         cameras = _sanitize_cameras(catalog.read_camera_map())
-        profiles = _sanitize_profiles(catalog.read_profiles())
+        profiles = _sanitize_profiles(catalog.read_profiles(), signing_key, current)
         pipeline = _sanitize_pipeline(
             catalog.read_gate1_funnel(GATE1_MODEL_NAME, GATE1_MODEL_VERSION)
         )
@@ -805,7 +805,7 @@ def _sanitize_auxiliary_media_rows(value: Any, key: bytes, now: int, id_field: s
     return output
 
 
-def _sanitize_profiles(value: Any) -> list[Dict[str, Any]]:
+def _sanitize_profiles(value: Any, key: bytes | None = None, now: int = 0) -> list[Dict[str, Any]]:
     if not isinstance(value, list) or len(value) > 500:
         raise StorageError("Deer profiles are unavailable")
     profiles: list[Dict[str, Any]] = []
@@ -834,6 +834,11 @@ def _sanitize_profiles(value: Any) -> list[Dict[str, Any]]:
                 "sex": str(raw.get("sex") or "unknown")[:20],
                 "season_year": int(raw.get("season_year") or 0),
                 "photo_count": max(0, int(raw.get("photo_count") or 0)),
+                "preview_urls": [
+                    "/api/library_preview?token=" + _sign_media_token(item["media_id"], now + LIBRARY_PREVIEW_SECONDS, key)
+                    for item in list(raw.get("profile_previews") or [])[:5]
+                    if key is not None and isinstance(item, Mapping) and isinstance(item.get("media_id"), str) and _UUID.fullmatch(item["media_id"])
+                ],
             }
         )
     return profiles
