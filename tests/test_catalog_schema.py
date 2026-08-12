@@ -25,7 +25,15 @@ class CatalogSchemaTests(unittest.TestCase):
         ):
             self.assertIn(required, sql)
         self.assertIn("check (bbox_x + bbox_width <= 1)", sql)
-        self.assertIn("animal instance", sql)
+        self.assertIn("p_hd_animal_instance_id uuid", sql)
+
+    def test_unsafe_legacy_multi_animal_backfill_is_removed_before_review(self):
+        sql = Path("supabase/migrations/20260812011500_remove_unsafe_legacy_multi_animal_backfill.sql").read_text()
+        self.assertIn("coalesce((r.result->>'animal_count')::integer, 1) > 1", sql)
+        self.assertIn("crop_recipe->>'source' = 'legacy_whole_frame'", sql)
+        self.assertIn("not exists", sql.lower())
+        self.assertIn("hd_review_decisions", sql)
+        self.assertIn("create trigger hd_animal_instances_append_only", sql)
 
     def test_timestamp_parser_is_correctly_marked_stable(self):
         migration = MIGRATIONS / "20260810232827_timestamp_parser_stability.sql"
