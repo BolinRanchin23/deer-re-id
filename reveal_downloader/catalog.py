@@ -2,7 +2,9 @@
 
 import hashlib
 import hmac
+import logging
 import json
+import math
 import re
 import time
 import uuid
@@ -19,11 +21,11 @@ from .supabase import (
     _project_origin,
 )
 
-LIBRARY_DEADLINE_SECONDS = 8.0
+LIBRARY_DEADLINE_SECONDS = 25.0
 LIBRARY_PREVIEW_SECONDS = 300
 LIBRARY_REVIEW_SECONDS = 900
 HD_REQUEST_DEADLINE_SECONDS = 15.0
-MAX_LIBRARY_PHOTOS = 50
+MAX_LIBRARY_PHOTOS = 10
 MAX_LIBRARY_PREVIEW_BYTES = 8 * 1024 * 1024
 GATE1_MODEL_NAME = "SpeciesNet"
 GATE1_MODEL_VERSION = "4.0.3a"
@@ -95,6 +97,12 @@ class SupabaseCatalog:
     def read_profiles(self) -> Any:
         return self._rpc("deerid_profiles", {})
 
+    def read_profile_gallery_page(self, profile_id: str, limit: int = 24) -> Any:
+        return self._rpc(
+            "deerid_profile_gallery_page",
+            {"p_profile_id": profile_id, "p_limit": max(1, min(60, int(limit)))},
+        )
+
     def read_camera_map(self) -> Any:
         return self._rpc("deerid_private_camera_map", {})
 
@@ -110,6 +118,15 @@ class SupabaseCatalog:
     def read_operational_stats(self) -> Any:
         return self._rpc("deerid_operational_stats", {})
 
+    def read_process_overview(self) -> Any:
+        return self._rpc("deerid_process_overview", {})
+
+    def query_all_photos(self, filters: Mapping[str, Any]) -> Any:
+        return self._rpc("deerid_all_photos", {"p_" + key: value for key, value in filters.items()})
+
+    def set_profile_representative(self, assignment_event_id: int, profile_id: str) -> Any:
+        return self._rpc("deerid_set_profile_representative", {"p_assignment_event_id": assignment_event_id, "p_profile_id": profile_id})
+
     def read_gate1b_pending(
         self, model_name: str, model_version: str, limit: int = 20
     ) -> Any:
@@ -120,6 +137,22 @@ class SupabaseCatalog:
                 "p_model_version": model_version,
                 "p_limit": max(1, min(60, int(limit))),
             },
+        )
+
+    def claim_gate1b_batch(
+        self, model_name: str, model_version: str, limit: int = 10
+    ) -> Any:
+        return self._rpc(
+            "deerid_claim_gate1b_batch",
+            {"p_model_name":model_name,"p_model_version":model_version,"p_limit":max(1,min(20,int(limit)))},
+        )
+
+    def complete_gate1b_batch(
+        self, claim_token: str, model_name: str, model_version: str, results: list[dict[str, Any]]
+    ) -> Any:
+        return self._rpc(
+            "deerid_complete_gate1b_batch",
+            {"p_claim_token":claim_token,"p_model_name":model_name,"p_model_version":model_version,"p_results":results},
         )
 
     def record_gate1b_batch(
@@ -272,11 +305,17 @@ class SupabaseCatalog:
     def read_hd_review_queue(self, limit: int = 60) -> Any:
         return self._rpc("deerid_hd_review_queue", {"p_limit": limit})
 
+    def read_hd_review_progress(self) -> Any:
+        return self._rpc("deerid_hd_review_progress", {})
+
     def record_automation_label(self, event_id: int, verdict: str, note: str = "") -> Any:
         return self._rpc("deerid_record_gate1b_automation_label", {"p_automation_event_id": event_id, "p_verdict": verdict, "p_note": note or None})
 
     def record_hd_review_decision(self, result_id: int, action: str, *, instance_id: Optional[str] = None, profile_id: Optional[str] = None, display_name: str = "", species: str = "", sex: str = "", note: str = "") -> Any:
         return self._rpc("deerid_record_hd_review_decision", {"p_hd_review_result_id": result_id, "p_action": action, "p_profile_id": profile_id, "p_display_name": display_name or None, "p_species": species or None, "p_sex": sex or None, "p_note": note or None, "p_hd_animal_instance_id": instance_id})
+
+    def reassign_hd_instance(self, assignment_event_id: int, profile_id: str) -> Any:
+        return self._rpc("deerid_reassign_hd_instance", {"p_assignment_event_id": assignment_event_id, "p_profile_id": profile_id})
 
     def read_gate1_pending(
         self, model_name: str, model_version: str, limit: int = 60
@@ -334,8 +373,15 @@ def handle_library(
             url, key, environ.get("SUPABASE_BUCKET", "tactacam-photos")
         )
         catalog.set_deadline(clock() + LIBRARY_DEADLINE_SECONDS, clock=clock)
-        photos = _sanitize_photos(
-            catalog.read_library(MAX_LIBRARY_PHOTOS), signing_key, current
+        # All Photos owns the paginated archive feed in production; loading it
+        # here duplicates a large nested RPC response and can make every dashboard
+        # view fail. Test/injected catalogs retain the legacy seam used by action tests.
+        photos = (
+            []
+            if catalog_factory is SupabaseCatalog
+            else _sanitize_photos(
+                catalog.read_library(MAX_LIBRARY_PHOTOS), signing_key, current
+            )
         )
         cameras = _sanitize_cameras(catalog.read_camera_map())
         profiles = _sanitize_profiles(catalog.read_profiles(), signing_key, current)
@@ -344,9 +390,24 @@ def handle_library(
         )
         gate1b = _sanitize_gate1b_metrics(catalog.read_gate1b_metrics())
         stats = _sanitize_operational_stats(catalog.read_operational_stats())
-        automation_audit = _sanitize_auxiliary_media_rows(catalog.read_automation_audit(120), signing_key, current, "automation_event_id")
-        hd_review_queue = _sanitize_auxiliary_media_rows(catalog.read_hd_review_queue(25), signing_key, current, "hd_review_result_id")
+        process_overview = _sanitize_process_overview(catalog.read_process_overview())
+        automation_audit = _sanitize_auxiliary_media_rows(catalog.read_automation_audit(20), signing_key, current, "automation_event_id")
+        # Keep the workspace bootstrap below the bounded PostgREST transport limit.
+        # Profiling owns subsequent queue slices; All Photos owns archive paging.
+        hd_review_queue = _sanitize_auxiliary_media_rows(catalog.read_hd_review_queue(5), signing_key, current, "hd_review_result_id")
+        raw_hd_progress = catalog.read_hd_review_progress()
+        hd_review_progress = {
+            "total": max(0, int(raw_hd_progress.get("total", 0))),
+            "completed": max(0, int(raw_hd_progress.get("completed", 0))),
+            "remaining": max(0, int(raw_hd_progress.get("remaining", 0))),
+            "by_camera": {
+                camera_id: max(0, int(count))
+                for camera_id, count in dict(raw_hd_progress.get("by_camera") or {}).items()
+                if isinstance(camera_id, str) and _UUID.fullmatch(camera_id)
+            },
+        } if isinstance(raw_hd_progress, Mapping) else {"total": 0, "completed": 0, "remaining": 0}
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
+        logging.exception("DeerID library assembly failed")
         return 503, {"ok": False, "error": "library unavailable"}
     payload: Dict[str, Any] = {
         "ok": True,
@@ -356,13 +417,61 @@ def handle_library(
         "pipeline": pipeline,
         "gate1b": gate1b,
         "stats": stats,
+        "process_overview": process_overview,
         "automation_audit": automation_audit,
         "hd_review_queue": hd_review_queue,
+        "hd_review_progress": hd_review_progress,
     }
     mapbox_token = environ.get("NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN", "").strip()
     if _MAPBOX_TOKEN.fullmatch(mapbox_token):
         payload["mapbox_access_token"] = mapbox_token
     return 200, payload
+
+
+def handle_profile_gallery(
+    environ: Mapping[str, str],
+    query: Mapping[str, Any],
+    *,
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Return one bounded profile gallery without coupling it to app bootstrap."""
+    signing_key = _signing_key(environ)
+    url = environ.get("SUPABASE_URL", "")
+    secret = environ.get("SUPABASE_SECRET_KEY", "")
+    profile_id = query.get("profile_id")
+    if (
+        signing_key is None
+        or not url
+        or not secret
+        or not isinstance(profile_id, str)
+        or _UUID.fullmatch(profile_id) is None
+    ):
+        return 400, {"ok": False, "error": "invalid profile"}
+    try:
+        limit = int(query.get("limit", 24))
+    except (TypeError, ValueError):
+        return 400, {"ok": False, "error": "invalid profile"}
+    if limit < 1 or limit > 60:
+        return 400, {"ok": False, "error": "invalid profile"}
+    current = int(time.time()) if epoch_now is None else int(epoch_now)
+    try:
+        catalog = catalog_factory(
+            url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
+        )
+        rows = _sanitize_profile_gallery(
+            catalog.read_profile_gallery_page(profile_id, limit),
+            signing_key,
+            current,
+            expected_profile_id=profile_id,
+            limit=limit,
+        )
+        if any(row.get("profile_id") != profile_id for row in rows):
+            raise StorageError("Profile gallery is unavailable")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
+        logging.exception("DeerID profile gallery assembly failed")
+        return 503, {"ok": False, "error": "profile gallery unavailable"}
+    return 200, {"ok": True, "items": rows}
 
 
 def handle_library_preview(
@@ -602,6 +711,25 @@ def handle_hd_review_decision(
     return 200,dict(result)
 
 
+def handle_profile_reassignment(
+    environ: Mapping[str, str], token: str, profile_id: str, *,
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    key = _signing_key(environ); current = int(time.time()) if epoch_now is None else int(epoch_now)
+    event_id = _verify_aux_action_token(token, "reassign", key, current) if key is not None else None
+    if event_id is None or not isinstance(profile_id, str) or _UUID.fullmatch(profile_id) is None:
+        return 404, {"ok": False, "error": "not found"}
+    url=environ.get("SUPABASE_URL",""); secret=environ.get("SUPABASE_SECRET_KEY","")
+    if not url or not secret: return 404, {"ok": False, "error": "not found"}
+    try:
+        catalog=catalog_factory(url,secret,environ.get("SUPABASE_BUCKET","tactacam-photos")); clock=time.monotonic; catalog.set_deadline(clock()+LIBRARY_DEADLINE_SECONDS,clock=clock)
+        result=catalog.reassign_hd_instance(event_id,profile_id)
+        if not isinstance(result,Mapping) or not result.get("ok"): raise StorageError("Profile reassignment failed")
+    except (AttributeError,OSError,RuntimeError,TypeError,ValueError,StorageError): return 503,{"ok":False,"error":"profile reassignment unavailable"}
+    return 200,dict(result)
+
+
 def handle_automation_label(
     environ: Mapping[str, str],
     token: str,
@@ -683,8 +811,43 @@ def handle_gate1b_label(
     return 200, {"ok": True, "media_id": media_id, "label_id": result.get("label_id")}
 
 
-def _sanitize_photos(value: Any, key: bytes, now: int) -> list[Dict[str, Any]]:
-    if not isinstance(value, list) or len(value) > MAX_LIBRARY_PHOTOS:
+def handle_photos_query(environ: Mapping[str, str], query: Mapping[str, str], *, catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog, epoch_now: Optional[int] = None) -> Tuple[int, Dict[str, Any]]:
+    key = _signing_key(environ); url=environ.get("SUPABASE_URL",""); secret=environ.get("SUPABASE_SECRET_KEY","")
+    if key is None or not url or not secret: return 404,{"ok":False,"error":"not found"}
+    allowed={"cursor","date_from","date_to","hour_from","hour_to","time_of_day","camera_id","species","male_antler","profile_status","variant","identity_status","sort","limit"}
+    if any(name not in allowed for name in query): return 400,{"ok":False,"error":"invalid filter"}
+    sort=query.get("sort","newest"); tod=query.get("time_of_day","all")
+    if sort not in {"newest","oldest","time_asc","time_desc"} or tod not in {"all","day","night"}: return 400,{"ok":False,"error":"invalid filter"}
+    try:
+        limit=max(1,min(60,int(query.get("limit","30"))))
+        filters={name:(None if query.get(name) in (None,"") else query.get(name)) for name in allowed if name!="limit"}; filters.update({"limit":limit,"sort":sort,"time_of_day":tod})
+        for field in ("hour_from","hour_to"):
+            if filters.get(field) is not None:
+                filters[field]=int(filters[field]);
+                if not 0 <= filters[field] <= 23: raise ValueError
+        camera_id=filters.get("camera_id")
+        if camera_id is not None and _UUID.fullmatch(str(camera_id)) is None: raise ValueError
+        catalog=catalog_factory(url,secret,environ.get("SUPABASE_BUCKET","tactacam-photos")); raw=catalog.query_all_photos(filters)
+        if not isinstance(raw,Mapping) or not isinstance(raw.get("items"),list): raise StorageError("Photo query unavailable")
+        current=int(time.time()) if epoch_now is None else int(epoch_now)
+        return 200,{"ok":True,"items":_sanitize_photos(raw["items"],key,current,max_items=limit),"next_cursor":raw.get("next_cursor"),"total":max(0,int(raw.get("total",0))),"facets":raw.get("facets",{})}
+    except (AttributeError,OSError,RuntimeError,TypeError,ValueError,StorageError): return 400,{"ok":False,"error":"invalid filter"}
+
+
+def handle_profile_representative(environ: Mapping[str,str], token: str, profile_id: str, *, catalog_factory: Callable[[str,str,str],Any]=SupabaseCatalog, epoch_now: Optional[int]=None) -> Tuple[int,Dict[str,Any]]:
+    key=_signing_key(environ); current=int(time.time()) if epoch_now is None else int(epoch_now)
+    event_id=_verify_aux_action_token(token,"representative",key,current) if key else None
+    url=environ.get("SUPABASE_URL",""); secret=environ.get("SUPABASE_SECRET_KEY","")
+    if event_id is None or _UUID.fullmatch(profile_id or "") is None or not url or not secret: return 404,{"ok":False,"error":"not found"}
+    try:
+        result=catalog_factory(url,secret,environ.get("SUPABASE_BUCKET","tactacam-photos")).set_profile_representative(event_id,profile_id)
+        if not isinstance(result,Mapping) or not result.get("ok"): raise StorageError("Representative unavailable")
+        return 200,{"ok":True,"profile_id":profile_id,"assignment_event_id":event_id}
+    except (AttributeError,OSError,RuntimeError,TypeError,ValueError,StorageError): return 503,{"ok":False,"error":"representative unavailable"}
+
+
+def _sanitize_photos(value: Any, key: bytes, now: int, *, max_items: int = MAX_LIBRARY_PHOTOS) -> list[Dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > max_items:
         raise StorageError("Private library is unavailable")
     output = []
     allowed = {
@@ -807,6 +970,21 @@ def _sanitize_auxiliary_media_rows(value: Any, key: bytes, now: int, id_field: s
     return output
 
 
+def _sanitize_bbox(value: Mapping[str, Any]) -> Dict[str, float]:
+    """Return one finite normalized box wholly contained by its source image."""
+    box: Dict[str, float] = {}
+    for field in ("x", "y", "width", "height"):
+        raw = value.get(field)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
+            raise StorageError("Animal crop is unavailable")
+        box[field] = float(raw)
+    if box["x"] < 0 or box["y"] < 0 or box["width"] <= 0 or box["height"] <= 0:
+        raise StorageError("Animal crop is unavailable")
+    if box["x"] + box["width"] > 1.000001 or box["y"] + box["height"] > 1.000001:
+        raise StorageError("Animal crop is unavailable")
+    return box
+
+
 def _sanitize_profiles(value: Any, key: bytes | None = None, now: int = 0) -> list[Dict[str, Any]]:
     if not isinstance(value, list) or len(value) > 500:
         raise StorageError("Deer profiles are unavailable")
@@ -827,8 +1005,7 @@ def _sanitize_profiles(value: Any, key: bytes | None = None, now: int = 0) -> li
             or len(display_name) > 80
         ):
             raise StorageError("Deer profiles are unavailable")
-        profiles.append(
-            {
+        profile = {
                 "id": profile_id,
                 "animal_id": animal_id,
                 "display_name": display_name.strip(),
@@ -836,14 +1013,75 @@ def _sanitize_profiles(value: Any, key: bytes | None = None, now: int = 0) -> li
                 "sex": str(raw.get("sex") or "unknown")[:20],
                 "season_year": int(raw.get("season_year") or 0),
                 "photo_count": max(0, int(raw.get("photo_count") or 0)),
+                "first_seen": raw.get("first_seen"),
+                "last_seen": raw.get("last_seen"),
+                "camera_ids": [value for value in list(raw.get("camera_ids") or []) if isinstance(value, str) and _UUID.fullmatch(value)],
+                "camera_names": [str(value)[:100] for value in list(raw.get("camera_names") or []) if value],
+                "representative_assignment_event_id": raw.get("representative_assignment_event_id"),
                 "preview_urls": [
                     "/api/library_preview?token=" + _sign_media_token(item["media_id"], now + LIBRARY_PREVIEW_SECONDS, key)
                     for item in list(raw.get("profile_previews") or [])[:5]
                     if key is not None and isinstance(item, Mapping) and isinstance(item.get("media_id"), str) and _UUID.fullmatch(item["media_id"])
                 ],
             }
-        )
+        previews=list(raw.get("profile_previews") or [])[:5]
+        representative=next((item for item in previews if isinstance(item,Mapping) and item.get("is_representative") is True),None)
+        if representative is not None:
+            asset_id=representative.get("media_asset_id");instance_id=representative.get("hd_animal_instance_id");bbox=representative.get("bbox")
+            if key is not None and isinstance(asset_id,str) and _UUID.fullmatch(asset_id) and isinstance(instance_id,str) and _UUID.fullmatch(instance_id) and isinstance(bbox,Mapping):
+                profile["representative_crop"]={"preview_url":"/api/library_preview?token="+_sign_asset_token(asset_id,now+LIBRARY_PREVIEW_SECONDS,key),"bbox":_sanitize_bbox(bbox),"crop_recipe":representative.get("crop_recipe"),"hd_animal_instance_id":instance_id}
+        profiles.append(profile)
     return profiles
+
+
+def _sanitize_profile_gallery(
+    value: Any,
+    key: bytes,
+    now: int,
+    *,
+    expected_profile_id: Optional[str] = None,
+    limit: int = 60,
+) -> list[Dict[str, Any]]:
+    row_limit = max(1, min(60, int(limit)))
+    if not isinstance(value, list) or len(value) > row_limit:
+        raise StorageError("Profile gallery is unavailable")
+    output = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            raise StorageError("Profile gallery is unavailable")
+        profile_id, media_id = raw.get("animal_profile_id"), raw.get("media_id")
+        if not isinstance(profile_id, str) or _UUID.fullmatch(profile_id) is None or not isinstance(media_id, str) or _UUID.fullmatch(media_id) is None:
+            raise StorageError("Profile gallery is unavailable")
+        if expected_profile_id is not None and profile_id != expected_profile_id:
+            raise StorageError("Profile gallery is unavailable")
+        captured_at, camera_id, camera_name = raw.get("captured_at"), raw.get("camera_id"), raw.get("camera_name")
+        if not isinstance(captured_at, str) or not captured_at or len(captured_at) > 64:
+            raise StorageError("Profile gallery is unavailable")
+        if camera_id is not None and (not isinstance(camera_id, str) or _UUID.fullmatch(camera_id) is None):
+            raise StorageError("Profile gallery is unavailable")
+        if camera_name is not None and (not isinstance(camera_name, str) or len(camera_name) > 100):
+            raise StorageError("Profile gallery is unavailable")
+        crop_recipe = raw.get("crop_recipe")
+        if crop_recipe is not None:
+            if not isinstance(crop_recipe, Mapping):
+                raise StorageError("Profile gallery is unavailable")
+            try:
+                if len(json.dumps(crop_recipe, separators=(",", ":"))) > 4096:
+                    raise StorageError("Profile gallery is unavailable")
+            except (TypeError, ValueError):
+                raise StorageError("Profile gallery is unavailable")
+            crop_recipe = dict(crop_recipe)
+        safe = {"profile_id": profile_id, "media_id": media_id, "captured_at": captured_at, "camera_name": camera_name}
+        asset_id = raw.get("media_asset_id")
+        instance_id = raw.get("hd_animal_instance_id")
+        event_id = raw.get("assignment_event_id")
+        safe["camera_id"] = camera_id
+        if isinstance(asset_id, str) and _UUID.fullmatch(asset_id) and isinstance(instance_id, str) and _UUID.fullmatch(instance_id) and isinstance(raw.get("bbox"), Mapping) and isinstance(event_id, int) and not isinstance(event_id, bool) and event_id > 0:
+            safe.update({"media_asset_id": asset_id, "hd_animal_instance_id": instance_id, "bbox": _sanitize_bbox(raw["bbox"]), "crop_recipe": crop_recipe, "preview_url": "/api/library_preview?token=" + _sign_asset_token(asset_id, now + LIBRARY_PREVIEW_SECONDS, key), "reassign_token": _sign_aux_action_token(event_id, "reassign", now + LIBRARY_REVIEW_SECONDS, key), "representative_token": _sign_aux_action_token(event_id, "representative", now + LIBRARY_REVIEW_SECONDS, key)})
+        else:
+            safe["preview_url"] = "/api/library_preview?token=" + _sign_media_token(media_id, now + LIBRARY_PREVIEW_SECONDS, key)
+        output.append(safe)
+    return output
 
 
 def _sanitize_cameras(value: Any) -> list[Dict[str, Any]]:
@@ -900,6 +1138,24 @@ def _sanitize_pipeline(value: Any) -> Dict[str, Any]:
         != output["total_thumbnails"]
     ):
         raise StorageError("Gate 1 funnel is unavailable")
+    return output
+
+
+def _sanitize_process_overview(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, Mapping) or not isinstance(value.get("as_of"), str):
+        raise StorageError("Process overview is unavailable")
+    output: Dict[str, Any] = {"as_of": value["as_of"]}
+    for window in ("last_24_hours", "last_7_days"):
+        raw = value.get(window)
+        if not isinstance(raw, Mapping) or not all(isinstance(raw.get(boundary), str) for boundary in ("from", "to")):
+            raise StorageError("Process overview is unavailable")
+        clean = {"from": raw["from"], "to": raw["to"]}
+        for field in ("photos_received", "male_or_antler", "animal_crops", "hd_requests", "profiles"):
+            count = raw.get(field)
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise StorageError("Process overview is unavailable")
+            clean[field] = count
+        output[window] = clean
     return output
 
 

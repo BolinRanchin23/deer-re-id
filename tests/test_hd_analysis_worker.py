@@ -83,7 +83,106 @@ class ReturnedHDWorkerTests(unittest.TestCase):
         self.assertLess(padded["y"], box["y"])
         self.assertGreater(padded["width"], box["width"])
         self.assertGreater(padded["height"], box["height"])
-        self.assertEqual(crop.size, (520, 350))
+        self.assertEqual(crop.size, (600, 374))
+
+    def test_megadetector_boxes_receive_antler_safe_asymmetric_padding(self):
+        box = {"x": 0.2, "y": 0.2, "width": 0.4, "height": 0.5}
+        padded = hd_analysis_worker.padded_bbox(box)
+        self.assertAlmostEqual(padded["x"], 0.10)
+        self.assertAlmostEqual(padded["y"], 0.025)
+        self.assertAlmostEqual(padded["width"], 0.60)
+        self.assertAlmostEqual(padded["height"], 0.75)
+
+    def test_megadetector_localizer_keeps_only_animals_and_normalizes_xyxy(self):
+        raw = {
+            "detections": [
+                {"category": "animal", "conf": 0.91, "bbox": [100, 50, 500, 350]},
+                {"category": "person", "conf": 0.99, "bbox": [0, 0, 100, 100]},
+                {"category": "animal", "conf": 0.12, "bbox": [10, 10, 20, 20]},
+            ]
+        }
+        localizer = hd_analysis_worker.MegaDetectorLocalizer(
+            detector=lambda _path: raw,
+            confidence_threshold=0.15,
+        )
+        source = Image.new("RGB", (1000, 500), "white")
+        encoded = BytesIO(); source.save(encoded, format="JPEG")
+        result = localizer.locate(encoded.getvalue())
+        self.assertEqual(result["animal_count"], 1)
+        self.assertEqual(result["animals"][0]["bbox"], {
+            "x": 0.1, "y": 0.1, "width": 0.4, "height": 0.6,
+        })
+
+    def test_megadetector_localizer_rejects_malformed_detector_output(self):
+        source = Image.new("RGB", (100, 100), "white")
+        encoded = BytesIO(); source.save(encoded, format="JPEG")
+        for malformed in (None, {}, {"detections": "bad"}):
+            with self.subTest(malformed=malformed), self.assertRaises(hd_analysis_worker.ModelUnavailable):
+                hd_analysis_worker.MegaDetectorLocalizer(detector=lambda _path, value=malformed: value).locate(encoded.getvalue())
+
+    def test_analyzer_uses_megadetector_not_gpt_for_localization(self):
+        class CropOnlyAnalyzer(hd_analysis_worker.OpenAIHDAnalyzer):
+            def __init__(self):
+                self.requests = []
+                self.localizer = mock.Mock()
+                self.localizer.locate.return_value = {
+                    "animal_count": 1,
+                    "detection_complete": True,
+                    "detection_notes": "MegaDetector V6 found one animal",
+                    "animals": [{"instance_index": 1, "bbox": {"x": .1, "y": .1, "width": .4, "height": .7}}],
+                }
+            def _request(self, image, prompt, schema, name, max_tokens):
+                self.requests.append(name)
+                return ReturnedHDWorkerTests.crop_assessment()
+        source=Image.new("RGB",(100,100),"white");encoded=BytesIO();source.save(encoded,format="JPEG")
+        analyzer=CropOnlyAnalyzer(); result=analyzer.analyze(encoded.getvalue())
+        analyzer.localizer.locate.assert_called_once()
+        self.assertEqual(analyzer.requests, ["deerid_hd_crop_assessment"])
+        self.assertEqual(result["animal_count"], 1)
+
+    def test_analyzer_falls_back_to_gpt_localization_when_megadetector_dependency_is_unavailable(self):
+        class FallbackAnalyzer(hd_analysis_worker.OpenAIHDAnalyzer):
+            def __init__(self):
+                self.requests = []
+                self.localizer = mock.Mock()
+                self.localizer.locate.side_effect = hd_analysis_worker.LocalizerDependencyUnavailable(
+                    "PytorchWildlife is required for HD localization"
+                )
+            def _request(self, image, prompt, schema, name, max_tokens):
+                self.requests.append(name)
+                if name == "deerid_hd_localization":
+                    return {"animal_count": 1, "detection_complete": True, "detection_notes": "one deer", "animals": [
+                        {"instance_index": 1, "bbox": {"x": .1, "y": .1, "width": .4, "height": .7}}
+                    ]}
+                return ReturnedHDWorkerTests.crop_assessment()
+        source=Image.new("RGB",(100,100),"white");encoded=BytesIO();source.save(encoded,format="JPEG")
+        analyzer=FallbackAnalyzer();result=analyzer.analyze(encoded.getvalue())
+        self.assertEqual(result["animal_count"],1)
+        self.assertEqual(analyzer.requests,["deerid_hd_localization","deerid_hd_crop_assessment"])
+
+    def test_plain_localizer_model_failure_does_not_fall_back(self):
+        analyzer=mock.Mock(spec=hd_analysis_worker.OpenAIHDAnalyzer)
+        analyzer.localizer=mock.Mock()
+        analyzer.localizer.locate.side_effect=hd_analysis_worker.ModelUnavailable("broken detector")
+        with self.assertRaises(hd_analysis_worker.ModelUnavailable):
+            hd_analysis_worker.OpenAIHDAnalyzer.analyze(analyzer,b"image")
+        analyzer._request.assert_not_called()
+
+    def test_runtime_without_pytorchwildlife_records_distinct_openai_localizer_provenance(self):
+        result=hd_analysis_worker.run_worker(
+            {"SUPABASE_URL":"url","SUPABASE_SECRET_KEY":"key","OPENAI_API_KEY":"openai-test"},
+            catalog_factory=FakeCatalog,analyzer_factory=FakeAnalyzer,
+            localizer_available=lambda:False,
+        )
+        self.assertTrue(result["ok"])
+        catalog=FakeCatalog.instance
+        self.assertEqual(catalog.claim_args[:2],(hd_analysis_worker.FALLBACK_MODEL_NAME,hd_analysis_worker.FALLBACK_MODEL_VERSION))
+        self.assertEqual(catalog.completed[1:3],(hd_analysis_worker.FALLBACK_MODEL_NAME,hd_analysis_worker.FALLBACK_MODEL_VERSION))
+
+    def test_hd_pipeline_pins_megadetector_and_gpt54_mini_versions(self):
+        self.assertEqual(hd_analysis_worker.HD_DESCRIPTION_MODEL, "gpt-5.4-mini-2026-03-17")
+        self.assertIn("megadetector-v6", hd_analysis_worker.MODEL_VERSION)
+        self.assertIn("gpt-5.4-mini-2026-03-17", hd_analysis_worker.MODEL_VERSION)
 
     def test_crop_padding_stays_inside_source_at_image_edges(self):
         upper=hd_analysis_worker.padded_bbox({"x":0.0,"y":0.0,"width":0.2,"height":0.3})
@@ -256,6 +355,7 @@ class ReturnedHDWorkerTests(unittest.TestCase):
             {"SUPABASE_URL": "url", "SUPABASE_SECRET_KEY": "key", "OPENAI_API_KEY": "openai-test"},
             catalog_factory=FakeCatalog,
             analyzer_factory=FakeAnalyzer,
+            localizer_available=lambda: True,
             deadline=100.0,
             clock=lambda: 0.0,
         )

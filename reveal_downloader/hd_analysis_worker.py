@@ -1,13 +1,18 @@
 """Local returned-HD analysis worker for human profile review."""
 from __future__ import annotations
-import base64,hashlib,hmac,json,math,os,re,time,urllib.error,urllib.request
+import base64,contextlib,hashlib,hmac,importlib.util,io,json,math,os,re,tempfile,time,urllib.error,urllib.request
 from io import BytesIO
 from PIL import Image,ImageOps
 from typing import Any,Callable,Mapping,Optional
 from .catalog import SupabaseCatalog
-from .gate1b_worker import DEFAULT_MODEL,OPENAI_ENDPOINT,ModelUnavailable
-MODEL_NAME="OpenAI-GPT-4o-mini-Vision-HD"
-MODEL_VERSION="gpt-4o-mini-2024-07-18@crop-specific-hd-2026-08-12.2"
+from .gate1b_worker import OPENAI_ENDPOINT,ModelUnavailable
+HD_DESCRIPTION_MODEL="gpt-5.4-mini-2026-03-17"
+DEFAULT_MODEL=HD_DESCRIPTION_MODEL
+MEGADETECTOR_MODEL="MDV6-yolov9-c"
+MODEL_NAME="MegaDetector-V6-plus-OpenAI-GPT-5.4-mini-HD"
+MODEL_VERSION=f"megadetector-v6-{MEGADETECTOR_MODEL.lower()}@gpt-5.4-mini-2026-03-17@hd-crops-2026-08-12.3"
+FALLBACK_MODEL_NAME="OpenAI-GPT-5.4-mini-localization-plus-HD-crops"
+FALLBACK_MODEL_VERSION="gpt-5.4-mini-2026-03-17@localization-and-hd-crops-2026-08-13.1"
 MAX_IMAGE_BYTES=24*1024*1024; MAX_RESPONSE_BYTES=128*1024
 LOCALIZATION_PROMPT=("Detect EVERY visible deer. Return one animals entry per deer, ordered left-to-right. Each normalized [0,1] bounding box must contain the complete visible deer, including every visible antler tip, ear, nose, leg, hoof, tail, and body edge; prefer extra background over clipping anatomy. "
 "animal_count must equal the number of animals entries. detection_complete is false whenever a deer may be missed, two deer cannot be separated, or a boundary is uncertain. Describe that problem in detection_notes. "
@@ -38,6 +43,7 @@ CROP_SCHEMA={"type":"object","properties":CROP_PROPERTIES,"required":list(CROP_P
 SCHEMA={"type":"object","properties":{"animal_count":{"type":"integer","minimum":0,"maximum":20},"detection_complete":{"type":"boolean"},"detection_notes":{"type":"string","maxLength":500},"animals":{"type":"array","items":ANIMAL_SCHEMA,"maxItems":20}},"required":["animal_count","detection_complete","detection_notes","animals"],"additionalProperties":False}
 ANIMAL_FIELDS=set(ANIMAL_PROPERTIES)
 LEGACY_FIELDS=ANIMAL_FIELDS-{"instance_index","bbox"}
+class LocalizerDependencyUnavailable(ModelUnavailable): pass
 def _validated_bbox(box:Any)->dict[str,float]:
  if not isinstance(box,Mapping) or set(box)!={"x","y","width","height"}: raise ModelUnavailable("HD bounding box is invalid")
  if any(isinstance(box[k],bool) or not isinstance(box[k],(int,float)) for k in box): raise ModelUnavailable("HD bounding box is invalid")
@@ -50,7 +56,8 @@ def _bbox_iou(a:Mapping[str,float],b:Mapping[str,float])->float:
  return intersection/(a["width"]*a["height"]+b["width"]*b["height"]-intersection) if intersection else 0.0
 def padded_bbox(box:Mapping[str,Any])->dict[str,float]:
  box=_validated_bbox(box);x,y,w,h=(box[k] for k in ("x","y","width","height"))
- left=max(0.0,x-w*.15);top=max(0.0,y-h*.20);right=min(1.0,x+w*1.15);bottom=min(1.0,y+h*1.20)
+ # MegaDetector boxes are deliberately expanded, with extra head/antler room.
+ left=max(0.0,x-w*.25);top=max(0.0,y-h*.35);right=min(1.0,x+w*1.25);bottom=min(1.0,y+h*1.15)
  return {"x":left,"y":top,"width":right-left,"height":bottom-top}
 def crop_animal_image(image:bytes,box:Mapping[str,Any])->bytes:
  try:
@@ -91,11 +98,63 @@ def normalize_result(value:Mapping[str,Any])->dict[str,Any]:
  animals=[_normalize_animal(item) for item in value["animals"]]
  if [item["instance_index"] for item in animals]!=list(range(1,count+1)): raise ModelUnavailable("HD animal indexes are invalid")
  return {"animal_count":count,"detection_complete":value["detection_complete"],"detection_notes":value["detection_notes"].strip(),"animals":animals}
+class MegaDetectorLocalizer:
+ """Authoritative MegaDetector V6 animal localization adapter."""
+ def __init__(self,detector:Optional[Callable[[str],Any]]=None,confidence_threshold:float=.15):
+  self.detector=detector;self.confidence_threshold=confidence_threshold
+ def _default_detector(self,path:str)->Any:
+  try:
+   from PytorchWildlife.models import detection as pw_detection
+  except ModuleNotFoundError as exc:
+   if exc.name and (exc.name=="PytorchWildlife" or exc.name.startswith("PytorchWildlife.")): raise LocalizerDependencyUnavailable("PytorchWildlife is required for HD localization") from exc
+   raise ModelUnavailable("MegaDetector dependency is broken") from exc
+  except ImportError as exc: raise ModelUnavailable("MegaDetector dependency is broken") from exc
+  # Ultralytics writes progress/model banners to stdout; keep worker stdout JSON-only.
+  with contextlib.redirect_stdout(io.StringIO()):
+   if not hasattr(self,"_model"):
+    self._model=pw_detection.MegaDetectorV6(device="cpu",version=MEGADETECTOR_MODEL)
+   return self._model.single_image_detection(path,det_conf_thres=self.confidence_threshold)
+ @staticmethod
+ def _rows(raw:Any)->list[dict[str,Any]]:
+  if not isinstance(raw,Mapping): raise ModelUnavailable("MegaDetector response is invalid")
+  if isinstance(raw.get("normalized_coords"),list):
+   detections=raw.get("detections")
+   if detections is None: raise ModelUnavailable("MegaDetector response is invalid")
+   classes=list(getattr(detections,"class_id",[]));scores=list(getattr(detections,"confidence",[]))
+   if len(classes)!=len(raw["normalized_coords"]) or len(scores)!=len(classes): raise ModelUnavailable("MegaDetector response is invalid")
+   return [{"category":"animal" if int(classes[i])==0 else "person" if int(classes[i])==1 else "vehicle","conf":float(scores[i]),"bbox":list(box),"normalized":True} for i,box in enumerate(raw["normalized_coords"])]
+  detections=raw.get("detections")
+  if not isinstance(detections,list): raise ModelUnavailable("MegaDetector response is invalid")
+  return detections
+ def locate(self,image:bytes)->dict[str,Any]:
+  try:
+   with Image.open(BytesIO(image)) as source: width,height=ImageOps.exif_transpose(source).size
+   with tempfile.NamedTemporaryFile(suffix=".jpg") as handle:
+    handle.write(image);handle.flush();raw=(self.detector or self._default_detector)(handle.name)
+  except (OSError,ValueError) as exc: raise ModelUnavailable("MegaDetector could not read HD image") from exc
+  boxes=[]
+  try:
+   for item in self._rows(raw):
+    if not isinstance(item,Mapping): raise ModelUnavailable("MegaDetector response is invalid")
+    category=str(item.get("category",item.get("label",""))).lower();confidence=float(item.get("conf",item.get("confidence",0)) or 0)
+    if category not in {"0","1","animal"} or confidence<self.confidence_threshold: continue
+    coords=item.get("bbox")
+    if not isinstance(coords,(list,tuple)) or len(coords)!=4: raise ModelUnavailable("MegaDetector response is invalid")
+    x1,y1,x2,y2=map(float,coords)
+    if not item.get("normalized"):
+     x1/=width;y1/=height;x2/=width;y2/=height
+    box=_validated_bbox({"x":x1,"y":y1,"width":x2-x1,"height":y2-y1})
+    if not any(_bbox_iou(box,prior)>=.9 for prior in boxes): boxes.append(box)
+  except ModelUnavailable: raise
+  except (IndexError,AttributeError,TypeError,ValueError) as exc: raise ModelUnavailable("MegaDetector response is invalid") from exc
+  boxes.sort(key=lambda b:b["x"])
+  return {"animal_count":len(boxes),"detection_complete":bool(boxes),"detection_notes":f"MegaDetector V6 found {len(boxes)} animal(s) at confidence >= {self.confidence_threshold:.2f}","animals":[{"instance_index":i,"bbox":b} for i,b in enumerate(boxes,1)]}
+
 class OpenAIHDAnalyzer:
- def __init__(self,api_key:str,model:str,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic):
+ def __init__(self,api_key:str,model:str,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic,localizer:Optional[MegaDetectorLocalizer]=None):
   if not isinstance(api_key,str) or not api_key.strip(): raise ValueError("OpenAI API key is required")
-  if model!=DEFAULT_MODEL: raise ValueError("HD analyzer must use the pinned OpenAI snapshot")
-  self.api_key=api_key.strip();self.model=model;self.deadline=deadline;self.clock=clock
+  if model!=HD_DESCRIPTION_MODEL: raise ValueError("HD analyzer must use the pinned OpenAI snapshot")
+  self.api_key=api_key.strip();self.model=model;self.deadline=deadline;self.clock=clock;self.localizer=localizer or MegaDetectorLocalizer()
  def _request(self,image:bytes,prompt:str,schema:Mapping[str,Any],name:str,max_tokens:int)->dict[str,Any]:
   if not image or len(image)>MAX_IMAGE_BYTES: raise ModelUnavailable("HD image is invalid")
   timeout=180
@@ -103,7 +162,7 @@ class OpenAIHDAnalyzer:
    remaining=self.deadline-self.clock()-30
    if remaining<10: raise ModelUnavailable("HD analysis deadline exhausted")
    timeout=min(timeout,remaining)
-  body=json.dumps({"model":self.model,"messages":[{"role":"user","content":[{"type":"text","text":prompt},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,"+base64.b64encode(image).decode(),"detail":"high"}}]}],"response_format":{"type":"json_schema","json_schema":{"name":name,"strict":True,"schema":schema}},"temperature":0,"max_tokens":max_tokens},separators=(",",":")).encode()
+  body=json.dumps({"model":self.model,"messages":[{"role":"user","content":[{"type":"text","text":prompt},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,"+base64.b64encode(image).decode(),"detail":"high"}}]}],"response_format":{"type":"json_schema","json_schema":{"name":name,"strict":True,"schema":schema}},"max_completion_tokens":max_tokens},separators=(",",":")).encode()
   request=urllib.request.Request(OPENAI_ENDPOINT,data=body,headers={"Content-Type":"application/json","Authorization":"Bearer "+self.api_key},method="POST")
   try:
    with urllib.request.urlopen(request,timeout=timeout) as response: payload=response.read(MAX_RESPONSE_BYTES+1)
@@ -112,7 +171,10 @@ class OpenAIHDAnalyzer:
   try: return json.loads(json.loads(payload)["choices"][0]["message"]["content"])
   except (KeyError,TypeError,ValueError,json.JSONDecodeError) as exc: raise ModelUnavailable("HD model response is malformed") from exc
  def analyze(self,image:bytes)->dict[str,Any]:
-  located=self._request(image,LOCALIZATION_PROMPT,LOCALIZATION_SCHEMA,"deerid_hd_localization",1800)
+  if hasattr(self,"localizer"):
+   try: located=self.localizer.locate(image)
+   except LocalizerDependencyUnavailable: located=self._request(image,LOCALIZATION_PROMPT,LOCALIZATION_SCHEMA,"deerid_hd_localization",1800)
+  else: located=self._request(image,LOCALIZATION_PROMPT,LOCALIZATION_SCHEMA,"deerid_hd_localization",1800)
   if not isinstance(located,Mapping) or set(located)!=set(LOCALIZATION_SCHEMA["required"]): raise ModelUnavailable("HD localization response is invalid")
   count=located["animal_count"];animals=located["animals"];notes=located["detection_notes"]
   if isinstance(count,bool) or not isinstance(count,int) or not 0<=count<=20 or not isinstance(animals,list) or len(animals)!=count or not isinstance(located["detection_complete"],bool) or not isinstance(notes,str) or not notes.strip() or len(notes)>500: raise ModelUnavailable("HD localization response is invalid")
@@ -129,15 +191,16 @@ class OpenAIHDAnalyzer:
    if not isinstance(assessment,Mapping) or set(assessment)!=set(CROP_PROPERTIES): raise ModelUnavailable("HD crop assessment response is invalid")
    results.append({"instance_index":index,"bbox":box,**assessment})
   return normalize_result({"animal_count":count,"detection_complete":located["detection_complete"],"detection_notes":located["detection_notes"],"animals":results})
-def run_worker(environ:Mapping[str,str],*,media_asset_id:Optional[str]=None,catalog_factory:Callable[...,Any]=SupabaseCatalog,analyzer_factory:Callable[...,Any]=OpenAIHDAnalyzer,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic)->dict[str,Any]:
+def run_worker(environ:Mapping[str,str],*,media_asset_id:Optional[str]=None,catalog_factory:Callable[...,Any]=SupabaseCatalog,analyzer_factory:Callable[...,Any]=OpenAIHDAnalyzer,localizer_available:Callable[[],bool]=lambda:importlib.util.find_spec("PytorchWildlife") is not None,deadline:Optional[float]=None,clock:Callable[[],float]=time.monotonic)->dict[str,Any]:
  if not environ.get("SUPABASE_URL") or not environ.get("SUPABASE_SECRET_KEY"): raise ValueError("Supabase configuration is required")
  if not environ.get("OPENAI_API_KEY"): raise ValueError("OpenAI configuration is required")
- catalog=catalog_factory(environ["SUPABASE_URL"],environ["SUPABASE_SECRET_KEY"],environ.get("SUPABASE_BUCKET","tactacam-photos"));catalog.set_deadline(deadline or clock()+900,clock=clock);claim=catalog.claim_hd_review(MODEL_NAME,MODEL_VERSION,media_asset_id)
+ model_name,model_version=(MODEL_NAME,MODEL_VERSION) if localizer_available() else (FALLBACK_MODEL_NAME,FALLBACK_MODEL_VERSION)
+ catalog=catalog_factory(environ["SUPABASE_URL"],environ["SUPABASE_SECRET_KEY"],environ.get("SUPABASE_BUCKET","tactacam-photos"));catalog.set_deadline(deadline or clock()+900,clock=clock);claim=catalog.claim_hd_review(model_name,model_version,media_asset_id)
  if not isinstance(claim,Mapping) or not claim.get("ok"): raise RuntimeError("HD review claim failed")
  if claim.get("empty"): return {"ok":True,"empty":True,"completed":0,"failed":0}
  token=claim.get("claim_token")
  try:
-  image=catalog.read_private_image(claim["object_path"],max_bytes=MAX_IMAGE_BYTES);analyzer=analyzer_factory(environ["OPENAI_API_KEY"],DEFAULT_MODEL,deadline,clock);result=analyzer.analyze(image);completed=catalog.complete_hd_review(token,MODEL_NAME,MODEL_VERSION,result)
+  image=catalog.read_private_image(claim["object_path"],max_bytes=MAX_IMAGE_BYTES);analyzer=analyzer_factory(environ["OPENAI_API_KEY"],HD_DESCRIPTION_MODEL,deadline,clock);result=analyzer.analyze(image);completed=catalog.complete_hd_review(token,model_name,model_version,result)
   if not isinstance(completed,Mapping) or not completed.get("ok"): raise RuntimeError("HD result recording failed")
  except ModelUnavailable:
   catalog.fail_hd_review(token,"model_unavailable");return {"ok":False,"empty":False,"completed":0,"failed":1}

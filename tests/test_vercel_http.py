@@ -2,9 +2,15 @@ import unittest
 from http.server import BaseHTTPRequestHandler
 
 from api.sync import _start_page_from_path, handler
+from api.photos import handler as PhotosHandler
+from api.profile_representative import handler as RepresentativeHandler
 
 
 class VercelHttpAdapterTests(unittest.TestCase):
+    def test_refresh_handlers_are_vercel_http_handlers(self):
+        self.assertTrue(issubclass(PhotosHandler, BaseHTTPRequestHandler))
+        self.assertTrue(issubclass(RepresentativeHandler, BaseHTTPRequestHandler))
+
     def test_handler_is_a_vercel_python_http_handler(self):
         self.assertTrue(issubclass(handler, BaseHTTPRequestHandler))
 

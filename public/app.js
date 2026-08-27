@@ -8,8 +8,16 @@ let deerProfiles = [];
 let pipeline = {};
 let gate1bMetrics = {};
 let operationalStats = {};
+let processOverview = {};
+let allPhotosCursor = null;
+let photosRequestController = null;
+let photoFilterTimer = null;
 let automationAudit = [];
 let hdReviewQueue = [];
+let hdReviewProgress = {total: 0, completed: 0, remaining: 0};
+let profileGallery = [];
+let activeProfileId = null;
+let profileGalleryRequestGeneration = 0;
 let activeReviewQueue = 'uncertain';
 let mapboxToken = '';
 let cameraMap = null;
@@ -117,38 +125,8 @@ async function submitReview(item, action, card) {
 function setHealth(value) {
   const known = ['healthy', 'degraded', 'error'];
   const health = known.includes(value) ? value : 'unknown';
-  $('health').textContent = health === 'healthy' ? 'Healthy' : health === 'unknown' ? 'Waiting' : health[0].toUpperCase() + health.slice(1);
   $('nav-status').textContent = health === 'healthy' ? 'Archive healthy' : health === 'unknown' ? 'No completed runs' : 'Attention required';
   $('nav-dot').className = 'pulse ' + health;
-  $('health-detail').textContent = health === 'healthy' ? 'Latest run completed' : health === 'unknown' ? 'Waiting for first run' : 'Review recent runs';
-}
-
-function renderRuns(runs) {
-  const body = $('runs');
-  body.replaceChildren();
-  if (!runs.length) {
-    const row = body.insertRow();
-    const cell = row.insertCell();
-    cell.colSpan = 5;
-    cell.textContent = 'No synchronization runs recorded yet.';
-    return;
-  }
-  runs.forEach(run => {
-    const row = body.insertRow();
-    const verified = run.verified || {};
-    const verifiedUnits = Math.min(n(verified.image), n(verified.metadata), n(verified.checksum));
-    [formatDate(run.finished_at), run.status || 'unknown', n(run.downloaded), verifiedUnits, n(run.failed)].forEach((value, index) => {
-      const cell = row.insertCell();
-      if (index === 1) {
-        const pill = document.createElement('span');
-        pill.className = 'status-pill ' + value;
-        pill.textContent = value;
-        cell.appendChild(pill);
-      } else {
-        cell.textContent = value;
-      }
-    });
-  });
 }
 
 function makeChip(text, className = '') {
@@ -373,37 +351,45 @@ function renderPhotoGrid(target, items, options = {}) {
 function populateCameraFilter() {
   const select = $('camera-filter');
   while (select.options.length > 1) select.remove(1);
-  const names = [...new Set(photos.map(item => item.camera_name).filter(Boolean))].sort();
-  names.forEach(name => {
+  const inventory = cameras.map(camera => [camera.id, camera.name]).filter(([, name]) => name).sort((a,b) => a[1].localeCompare(b[1]));
+  inventory.forEach(([id, name]) => {
     const option = document.createElement('option');
-    option.value = name;
+    option.value = id;
     option.textContent = name;
     select.appendChild(option);
+  });
+  ['hd-location-filter','deer-location-filter'].forEach(targetId => {
+    const target=$(targetId); if(!target)return; while(target.options.length>1)target.remove(1);
+    inventory.forEach(([id,name])=>{const option=document.createElement('option');option.value=id;option.textContent=name;target.appendChild(option);});
   });
 }
 
 function renderFilteredPhotos() {
-  const camera = $('camera-filter').value;
-  const labelState = $('label-filter').value;
-  const filtered = photos.filter(item => {
-    if (camera && item.camera_name !== camera) return false;
-    if (labelState === 'review' && !needsReview(item)) return false;
-    if (labelState === 'labeled' && needsReview(item)) return false;
-    return true;
-  });
-  const total = n(pipeline.total_thumbnails) || photos.length;
-  $('photo-summary').textContent = `${filtered.length} of ${photos.length} recent captures shown · ${total} total cataloged`;
-  renderPhotoGrid($('library-view'), filtered);
+  renderPhotoGrid($('library-view'), photos);
 }
 
+async function fetchAllPhotos(append=false) {
+  if(photosRequestController)photosRequestController.abort(); photosRequestController=new AbortController();
+  const params=new URLSearchParams({limit:'30',sort:$('photo-sort').value,time_of_day:$('photo-time-of-day').value});
+  [['date_from','photo-date-from'],['date_to','photo-date-to'],['hour_from','photo-hour-from'],['hour_to','photo-hour-to'],['camera_id','camera-filter'],['species','photo-species'],['male_antler','photo-male-antler'],['profile_status','photo-profile-status'],['identity_status','photo-identity-status'],['variant','photo-variant']].forEach(([key,id])=>{if($(id).value)params.set(key,$(id).value);});
+  if(append&&allPhotosCursor)params.set('cursor',allPhotosCursor);
+  const response=await fetch('/api/photos?'+params,{cache:'no-store',signal:photosRequestController.signal}); const data=await response.json(); if(!response.ok||!data.ok)throw new Error('All Photos is unavailable.');
+  photos=append?photos.concat(data.items||[]):data.items||[];allPhotosCursor=data.next_cursor||null;$('photos-load-more').hidden=!allPhotosCursor;$('photo-summary').textContent=`${photos.length} of ${n(data.total)} matching captures`;renderFilteredPhotos();
+}
+
+function schedulePhotoQuery(){clearTimeout(photoFilterTimer);photoFilterTimer=setTimeout(()=>fetchAllPhotos(false).catch(error=>{if(error.name!=='AbortError')showError(error.message);}),250);}
+
 function updateReviewCounts() {
-  const unresolved = n(pipeline.unresolved_review) || photos.filter(needsReview).length;
+  const actionable = photos.filter(belongsToActiveQueue).length;
+  const awaitingGemma = Math.max(0, n(pipeline.unresolved_review) - actionable);
   const activeCount = photos.filter(belongsToActiveQueue).length;
-  $('review-count').textContent = unresolved;
-  $('review-nav-count').textContent = unresolved;
+  $('review-count').textContent = actionable;
+  $('review-nav-count').textContent = actionable;
   $('review-summary').textContent = activeCount
     ? `${activeCount} loaded in ${activeReviewQueue.replaceAll('_', ' ')} · ${Math.min(5, Math.max(0, reviewQueue.length - 1))} next photos ready`
-    : `No loaded events in ${activeReviewQueue.replaceAll('_', ' ')}`;
+    : awaitingGemma
+      ? `No photos ready · ${awaitingGemma} awaiting Gemma routing`
+      : `No loaded events in ${activeReviewQueue.replaceAll('_', ' ')}`;
   document.querySelectorAll('[data-review-queue]').forEach(button => {
     const queue = button.dataset.reviewQueue;
     button.classList.toggle('active', queue === activeReviewQueue);
@@ -496,6 +482,15 @@ function renderGate1bStatus() {
 }
 
 function renderPipeline() {
+  const windows = [['24h', processOverview.last_24_hours], ['7d', processOverview.last_7_days]];
+  windows.forEach(([prefix, value]) => {
+    const data = value || {};
+    [['photos','photos_received'],['male','male_or_antler'],['crops','animal_crops'],['profiles','profiles']].forEach(([id,field]) => {
+      const target = $(`${prefix}-${id}`); if (target) target.textContent = Number.isInteger(data[field]) ? data[field] : '—';
+    });
+    const hd = $(`${prefix}-hd`); if (hd) hd.textContent = Number.isInteger(data.hd_requests) && Number.isInteger(data.photos_received) ? `${data.hd_requests} / ${data.photos_received}` : '—';
+  });
+  if (!$('pipeline-total')) return;
   const values = {
     'pipeline-total': pipeline.total_thumbnails,
     'pipeline-assessed': pipeline.assessed_thumbnails,
@@ -518,7 +513,9 @@ function collectProfiles() {
     name: profile.display_name || 'Named deer',
     seasonYear: profile.season_year,
     photoCount: n(profile.photo_count),
-    previewUrls: Array.isArray(profile.preview_urls) ? profile.preview_urls.slice(0, 5) : [],
+    representativeCrop: profile.representative_crop && typeof profile.representative_crop === 'object' ? profile.representative_crop : null,
+    previewUrls: Array.isArray(profile.preview_urls) ? profile.preview_urls.slice(0, 1) : [],
+    cameraIds: Array.isArray(profile.camera_ids) ? profile.camera_ids : [], cameraNames: profile.camera_names || [], first_seen: profile.first_seen, last_seen: profile.last_seen, species: profile.species, sex: profile.sex,
     photos: []
   }));
   photos.forEach(item => photoAnimals(item).forEach(animal => {
@@ -532,8 +529,111 @@ function collectProfiles() {
   return [...profiles.values()];
 }
 
+function makeInstanceCrop(item, className = 'hd-instance-crop') {
+  const bbox = item.bbox || {};
+  const values = ['x','y','width','height'].map(name => Number(bbox[name]));
+  if (!values.every(Number.isFinite) || values[0] < 0 || values[1] < 0 || values[2] <= 0 || values[3] <= 0 || values[0] + values[2] > 1.000001 || values[1] + values[3] > 1.000001) {
+    const unavailable = document.createElement('div'); unavailable.className = className; unavailable.textContent = 'Crop unavailable'; return unavailable;
+  }
+  const [bx, by, bw, bh] = values;
+  const crop = document.createElement('div'); crop.className = className;
+  const canvas = document.createElement('canvas'); canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'Cropped deer photo');
+  const image = new Image(); image.referrerPolicy = 'no-referrer';
+  image.addEventListener('load', () => {
+    const sx=Math.round(bx*image.naturalWidth), sy=Math.round(by*image.naturalHeight);
+    const sw=Math.max(1,Math.round(bw*image.naturalWidth)), sh=Math.max(1,Math.round(bh*image.naturalHeight));
+    canvas.width=sw; canvas.height=sh; canvas.getContext('2d').drawImage(image,sx,sy,sw,sh,0,0,sw,sh);
+    crop.style.aspectRatio = `${sw} / ${sh}`;
+  }, {once: true});
+  image.src = item.preview_url; crop.appendChild(canvas); return crop;
+}
+
+async function submitProfileReassignment(item, profileId, button) {
+  button.disabled = true;
+  const response = await fetch('/api/profile_reassignment', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({reassign_token: item.reassign_token, profile_id: profileId})});
+  const data = await response.json().catch(() => ({ok: false}));
+  if (!response.ok || !data.ok) { button.disabled = false; return showError('Photo reassignment could not be saved.'); }
+  item.profile_id = profileId; renderDeerProfiles(); openProfileGallery(activeProfileId);
+}
+
+async function setRepresentative(item, button) {
+  button.disabled=true;
+  const response=await fetch('/api/profile_representative',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({representative_token:item.representative_token,profile_id:item.profile_id})});
+  const data=await response.json().catch(()=>({ok:false}));
+  if(!response.ok||!data.ok){button.disabled=false;return showError('Representative photo could not be saved.');}
+  await fetchLibrary(); openProfileGallery(item.profile_id);
+}
+
+function openProfilePicker(item, purpose) {
+  const dialog=$('profile-picker-dialog'), list=$('profile-picker-list'), search=$('profile-picker-search'); list.replaceChildren();
+  const eligible=collectProfiles().filter(profile=>Number(profile.seasonYear)===new Date(item.captured_at).getFullYear()&&(purpose!=='reassign'||String(profile.id)!==String(item.profile_id)));
+  const choose=(profile,button)=>{dialog.close();if(purpose==='reassign')submitProfileReassignment(item,profile.id,button);else submitHDReviewDecision(item,{action:'match_profile',profile_id:profile.id},button);};
+  const renderGroup=(label,profiles)=>{
+    if(!profiles.length)return;
+    const section=document.createElement('section');section.className='profile-picker-section';
+    const heading=document.createElement('h3');heading.textContent=label;section.appendChild(heading);
+    profiles.forEach(profile=>{const button=document.createElement('button');button.type='button';button.className='profile-picker-option';button.textContent=`${profile.name} · ${profile.photoCount} confirmed photo${profile.photoCount===1?'':'s'}`;button.onclick=()=>choose(profile,button);section.appendChild(button);});
+    list.appendChild(section);
+  };
+  const render=()=>{
+    list.replaceChildren();
+    const query=search.value.trim().toLowerCase();
+    const visible=eligible.filter(profile=>profile.name.toLowerCase().includes(query));
+    const suggested=visible.filter(profile=>item.camera_id&&profile.cameraIds.includes(item.camera_id)).sort((a,b)=>b.photoCount-a.photoCount||a.name.localeCompare(b.name));
+    const other=visible.filter(profile=>!suggested.includes(profile)).sort((a,b)=>a.name.localeCompare(b.name));
+    const locationName=item.camera_name||cameras.find(camera=>camera.id===item.camera_id)?.name||'this location';
+    renderGroup(`Suggested at ${locationName}`,suggested);
+    renderGroup('Other profiles',other);
+  };
+  search.oninput=render;render();dialog.showModal();search.focus();
+}
+
+function openCreateProfile(item,result,button) {
+  const dialog=$('create-profile-dialog'),form=$('create-profile-form'),name=$('create-profile-name');name.value='';$('create-profile-species').value=result.species==='axis'?'axis deer':'white-tailed deer';$('create-profile-sex').value=['male','female'].includes(result.sex)?result.sex:'unknown';
+  form.onsubmit=event=>{event.preventDefault();if(!name.value.trim())return;dialog.close();submitHDReviewDecision(item,{action:'create_profile',display_name:name.value.trim(),species:$('create-profile-species').value,sex:$('create-profile-sex').value},button);};dialog.showModal();name.focus();
+}
+
+function renderProfileGalleryItems(profileId) {
+  const target = $('profile-gallery-grid'); target.replaceChildren();
+  profileGallery.filter(item => String(item.profile_id) === String(profileId)).forEach(item => {
+    const card = document.createElement('article'); card.className = 'card profile-gallery-card';
+    if (item.hd_animal_instance_id) card.appendChild(makeInstanceCrop(item, 'profile-gallery-crop'));
+    else { const image=document.createElement('img'); image.src=item.preview_url; image.alt='Confirmed deer photo'; card.appendChild(image); }
+    const menuButton=document.createElement('button'); menuButton.className='gallery-menu-button'; menuButton.type='button'; menuButton.setAttribute('aria-label','Photo actions'); menuButton.textContent='⋯';
+    const menu=document.createElement('div'); menu.className='profile-gallery-controls'; menu.hidden=true;
+    const representative=document.createElement('button'); representative.textContent='Set as representative'; representative.disabled=!item.representative_token; representative.onclick=()=>setRepresentative(item,representative);
+    const reassign=document.createElement('button'); reassign.textContent='Reassign to…'; reassign.disabled=!item.reassign_token; reassign.onclick=()=>openProfilePicker(item,'reassign');
+    menuButton.onclick=()=>{menu.hidden=!menu.hidden;}; menu.append(representative,reassign); card.append(menuButton,menu); target.appendChild(card);
+  });
+}
+
+async function openProfileGallery(profileId) {
+  const requestGeneration=++profileGalleryRequestGeneration;
+  activeProfileId = profileId;
+  const profile = deerProfiles.find(p => String(p.id) === String(profileId));
+  $('profile-gallery-title').textContent = profile ? profile.display_name : 'Deer photos';
+  $('profile-summary').textContent = profile ? `${profile.display_name} · ${profile.species || 'unknown species'} · ${profile.sex || 'unknown sex'} · ${profile.season_year || 'unknown season'} · ${n(profile.photo_count)} confirmed photos · First seen ${formatDate(profile.first_seen)} · Last seen ${formatDate(profile.last_seen)} · ${(profile.camera_names || []).join(', ') || 'Location unavailable'}` : '';
+  const target = $('profile-gallery-grid'); target.replaceChildren();
+  const loading=document.createElement('div');loading.className='card empty';loading.textContent='Loading deer photos…';target.appendChild(loading);
+  $('profile-gallery').hidden = false; $('deer-grid').hidden = true;
+  try {
+    const response=await fetch(`/api/profile_gallery?profile_id=${encodeURIComponent(profileId)}&limit=24`,{cache:'no-store'});
+    const data=await response.json().catch(()=>({ok:false}));
+    if(!response.ok||!data.ok||!Array.isArray(data.items))throw new Error('Deer photos are unavailable.');
+    if(requestGeneration!==profileGalleryRequestGeneration||String(activeProfileId)!==String(profileId))return;
+    profileGallery=data.items;
+    renderProfileGalleryItems(profileId);
+  } catch(error) {
+    if(requestGeneration!==profileGalleryRequestGeneration||String(activeProfileId)!==String(profileId))return;
+    target.replaceChildren();
+    const unavailable=document.createElement('div');unavailable.className='card empty';unavailable.textContent='This deer gallery is temporarily unavailable.';target.appendChild(unavailable);
+    showError(error.message);
+  }
+}
+
 function renderDeerProfiles() {
-  const profiles = collectProfiles();
+  const cameraId = $('deer-location-filter') ? $('deer-location-filter').value : '';
+  const profiles = collectProfiles().filter(profile => !cameraId || (profile.cameraIds || []).includes(cameraId));
   const target = $('deer-grid');
   target.replaceChildren();
   $('deer-summary').textContent = `${profiles.length} human-confirmed profiles`;
@@ -556,10 +656,19 @@ function renderDeerProfiles() {
     const item = profile.photos[0];
     const card = document.createElement('article');
     card.className = 'card deer-card';
-    const previewUrls = (profile.previewUrls || []).slice(0, 5);
-    if (previewUrls.length) {
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.addEventListener('click', () => openProfileGallery(profile.id));
+    card.addEventListener('keydown', event => { if (event.key === 'Enter') openProfileGallery(profile.id); });
+    const previewUrls = (profile.previewUrls || []).slice(0, 1);
+    if (profile.representativeCrop) {
       const strip = document.createElement('div');
-      strip.className = 'profile-thumbnail-strip';
+      strip.className = 'profile-thumbnail-strip representative-photo';
+      strip.appendChild(makeInstanceCrop(profile.representativeCrop, 'profile-representative-crop'));
+      card.appendChild(strip);
+    } else if (previewUrls.length) {
+      const strip = document.createElement('div');
+      strip.className = 'profile-thumbnail-strip representative-photo';
       previewUrls.forEach((url, index) => {
         const image = document.createElement('img');
         image.src = url;
@@ -602,11 +711,27 @@ function renderAutomationAudit() {
   if(!automationAudit.length){const empty=document.createElement('div');empty.className='card empty';empty.textContent='No automatic routing decisions yet.';target.appendChild(empty);}
 }
 
-function renderHDReview() {
+function preloadHDReviewQueue(count) {
+  hdReviewQueue.slice(1, count + 1).forEach(item => { const image = new Image(); image.src = item.preview_url; });
+}
+
+function renderHDReview(animate = false) {
   const target = $('hd-review-stage');
   if (!target) return;
   target.replaceChildren();
-  hdReviewQueue.forEach(item => {
+  const total = n(hdReviewProgress.total);
+  const remaining = n(hdReviewProgress.remaining);
+  const completed = Math.min(total, n(hdReviewProgress.completed));
+  const percent = total ? Math.round(100 * completed / total) : 100;
+  $('hd-review-progress-bar').style.width = `${percent}%`;
+  $('hd-review-progress-bar').setAttribute('aria-valuenow', String(percent));
+  const locationId = $('hd-location-filter').value;
+  const locationQueue = hdReviewQueue.filter(candidate => !locationId || candidate.camera_id === locationId);
+  const byCamera = hdReviewProgress.by_camera && typeof hdReviewProgress.by_camera === 'object' ? hdReviewProgress.by_camera : {};
+  const locationRemaining = locationId ? n(byCamera[locationId]) : remaining;
+  $('hd-review-progress-copy').textContent = `${locationRemaining} animals remaining`;
+  const item = locationQueue[0];
+  if (item) {
     const result = item.result || {};
     const bbox = item.bbox || {x: 0, y: 0, width: 1, height: 1};
     const card = document.createElement('article');
@@ -614,20 +739,7 @@ function renderHDReview() {
 
     const visual = document.createElement('div');
     visual.className = 'hd-instance-visual';
-    const crop = document.createElement('div');
-    crop.className = 'hd-instance-crop';
-    const cropImage = document.createElement('img');
-    cropImage.src = item.preview_url;
-    cropImage.alt = `Animal ${item.instance_index} crop from returned HD photo`;
-    cropImage.loading = 'lazy';
-    cropImage.referrerPolicy = 'no-referrer';
-    const setCropRatio = () => { crop.style.aspectRatio = `${Number(bbox.width || 1) * cropImage.naturalWidth} / ${Number(bbox.height || 1) * cropImage.naturalHeight}`; };
-    cropImage.addEventListener('load', setCropRatio, {once: true});
-    if (cropImage.complete && cropImage.naturalWidth) setCropRatio();
-    cropImage.style.width = `${100 / Number(bbox.width || 1)}%`;
-    cropImage.style.left = `${-100 * Number(bbox.x || 0) / Number(bbox.width || 1)}%`;
-    cropImage.style.top = `${-100 * Number(bbox.y || 0) / Number(bbox.height || 1)}%`;
-    crop.appendChild(cropImage);
+    const crop = makeInstanceCrop(item);
 
     const context = document.createElement('div');
     context.className = 'hd-instance-context';
@@ -653,8 +765,7 @@ function renderHDReview() {
     instance.textContent = `Animal ${item.instance_index} of ${item.instance_count} · One deer at a time`;
     const heading = document.createElement('strong');
     heading.textContent = `${result.species || 'Unknown deer'} · ${result.sex || 'unknown sex'}`;
-    const summary = document.createElement('p');
-    summary.textContent = result.summary || 'Analysis pending';
+    const summary = document.createElement('details'); const summaryLabel=document.createElement('summary'); summaryLabel.textContent='Animal-only model description'; const summaryCopy=document.createElement('p'); summaryCopy.textContent=result.summary||'Analysis pending'; summary.append(summaryLabel,summaryCopy);
     const ageCues = (result.age_cues || []).join(', ') || 'not assessable';
     const details = document.createElement('p');
     details.textContent = `View: ${result.view_angle || 'unknown'} · visible tines L/R: ${result.visible_tines_left ?? '—'}/${result.visible_tines_right ?? '—'} · ${result.tine_count_limitations || 'visibility limitations not recorded'} · Antlers: ${result.antler_structure || 'not described'} · Age: ${result.age_class || 'unknown'} (${ageCues})`;
@@ -662,30 +773,18 @@ function renderHDReview() {
     detection.className = item.detection_complete ? 'hd-detection-ok' : 'hd-detection-warning';
     detection.textContent = item.detection_complete ? item.detection_notes : `Detector needs human attention: ${item.detection_notes}`;
 
-    const controls = document.createElement('div');
-    controls.className = 'profile-assignment';
-    const select = document.createElement('select');
-    deerProfiles.filter(p => Number(p.season_year) === new Date(item.captured_at).getFullYear()).forEach(p => {
-      const option = document.createElement('option'); option.value = p.id; option.textContent = p.display_name; select.appendChild(option);
-    });
-    const match = document.createElement('button');
-    match.textContent = 'Match this animal to existing profile';
-    match.disabled = !select.options.length;
-    match.onclick = () => submitHDReviewDecision(item, {action: 'match_profile', profile_id: select.value}, match);
-    const name = document.createElement('input');
-    name.placeholder = `New name for Animal ${item.instance_index}`;
-    const create = document.createElement('button');
-    create.textContent = 'Create profile for this animal';
-    create.onclick = () => submitHDReviewDecision(item, {action: 'create_profile', display_name: name.value, species: result.species === 'axis' ? 'axis deer' : result.species === 'whitetail' ? 'white-tailed deer' : 'other deer', sex: ['male', 'female'].includes(result.sex) ? result.sex : 'unknown'}, create);
-    const skip = document.createElement('button');
-    skip.textContent = 'This animal is not identity-worthy';
-    skip.onclick = () => submitHDReviewDecision(item, {action: 'not_identity_worthy'}, skip);
-    controls.append(select, match, name, create, skip);
-    meta.append(instance, heading, summary, details, detection, controls);
+    const controls = document.createElement('div'); controls.className='hd-primary-actions';
+    const create=document.createElement('button'); create.type='button'; create.textContent='+'; create.setAttribute('aria-label','Create profile'); create.onclick=()=>openCreateProfile(item,result,create);
+    const match=document.createElement('button'); match.type='button'; match.textContent='✎'; match.setAttribute('aria-label','Assign existing profile'); match.onclick=()=>openProfilePicker(item,'match');
+    const skip=document.createElement('button'); skip.type='button'; skip.textContent='Not ID-worthy'; skip.setAttribute('aria-label','Mark as not identity-worthy'); skip.onclick=()=>submitHDReviewDecision(item,{action:'not_identity_worthy'},skip);
+    controls.append(create,match,skip);
+    meta.append(instance, heading, controls, summary, details, detection);
     card.append(visual, meta);
+    if (animate) card.classList.add('review-enter-right');
     target.appendChild(card);
-  });
-  if (!hdReviewQueue.length) {
+    preloadHDReviewQueue(5);
+  }
+  if (!locationQueue.length) {
     const empty = document.createElement('div'); empty.className = 'card empty'; empty.textContent = 'No returned HD animal instances awaiting profile review.'; target.appendChild(empty);
   }
 }
@@ -696,7 +795,12 @@ async function submitHDReviewDecision(item, payload, button) {
   const data = await response.json().catch(() => ({ok: false}));
   if (!response.ok || !data.ok) { button.disabled = false; return showError('HD profile decision could not be saved.'); }
   hdReviewQueue = hdReviewQueue.filter(x => x.hd_animal_instance_id !== item.hd_animal_instance_id);
-  await fetchLibrary();
+  hdReviewProgress.remaining = Math.max(0, n(hdReviewProgress.remaining) - 1);
+  hdReviewProgress.completed = Math.min(n(hdReviewProgress.total), n(hdReviewProgress.completed) + 1);
+  if (item.camera_id && hdReviewProgress.by_camera && typeof hdReviewProgress.by_camera === 'object') {
+    hdReviewProgress.by_camera[item.camera_id] = Math.max(0, n(hdReviewProgress.by_camera[item.camera_id]) - 1);
+  }
+  renderHDReview(true);
 }
 
 function renderCameraCards() {
@@ -766,14 +870,25 @@ function loadCameraMap() {
   cameraMap.fitBounds(bounds, {padding: [32, 32], maxZoom: 17});
 }
 
+function renderActiveImageView() {
+  if (activeView === 'photos') renderFilteredPhotos();
+  else if (activeView === 'review') renderReview();
+  else if (activeView === 'audit') renderAutomationAudit();
+  else if (activeView === 'hdreview') renderHDReview();
+  else if (activeView === 'deer') renderDeerProfiles();
+}
+
 function showView(name) {
   const allowed = ['overview', 'review', 'audit', 'hdreview', 'deer', 'cameras', 'photos'];
+  if (name === 'review') name = 'overview';
   if (!allowed.includes(name)) name = 'overview';
   activeView = name;
   document.querySelectorAll('[data-view-panel]').forEach(panel => { panel.hidden = panel.dataset.viewPanel !== name; });
   document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === name));
   history.replaceState(null, '', name === 'overview' ? location.pathname : `#${name}`);
+  renderActiveImageView();
   if (name === 'cameras') setTimeout(loadCameraMap, 0);
+  if (name === 'photos') fetchAllPhotos(false).catch(error=>showError(error.message));
   window.scrollTo({top: 0, behavior: 'instant'});
 }
 
@@ -781,29 +896,24 @@ function updateCatalogViews(renderReviewView = true) {
   const review = photos.filter(needsReview);
   const profiles = collectProfiles();
   const total = n(pipeline.total_thumbnails) || photos.length;
-  const unresolved = n(pipeline.unresolved_review) || review.length;
-  $('catalog-count').textContent = total;
-  $('review-count').textContent = unresolved;
-  $('camera-count').textContent = cameras.length;
-  $('review-nav-count').textContent = unresolved;
-  $('deer-nav-count').textContent = profiles.length;
-  $('camera-nav-count').textContent = cameras.length;
-  $('photo-nav-count').textContent = total;
+  const actionable = photos.filter(belongsToActiveQueue).length;
+  const counts = {
+    'catalog-count': total,
+    'review-count': actionable,
+    'camera-count': cameras.length,
+    'review-nav-count': actionable,
+    'deer-nav-count': profiles.length,
+    'camera-nav-count': cameras.length,
+    'photo-nav-count': total
+  };
+  Object.entries(counts).forEach(([id, value]) => { const target = $(id); if (target) target.textContent = value; });
   const stats = operationalStats;
-  $('photos-24h').textContent = n(stats.photos_received_24h);
-  $('hd-requests-24h').textContent = n(stats.hd_requests_24h);
-  $('hd-available-24h').textContent = n(stats.hd_available_24h);
   renderPipeline();
   renderGate1bStatus();
-  renderPhotoGrid($('recent-photos'), photos.slice(0, 8), {emptyTitle: 'No cataloged photos yet'});
   populateCameraFilter();
-  renderFilteredPhotos();
-  if (renderReviewView) renderReview();
+  if (renderReviewView || activeView !== 'review') renderActiveImageView();
   else updateReviewCounts();
-  renderDeerProfiles();
   renderCameraCards();
-  renderAutomationAudit();
-  renderHDReview();
   if (activeView === 'cameras') loadCameraMap();
 }
 
@@ -817,8 +927,11 @@ async function fetchLibrary(options = {}) {
   pipeline = data.pipeline && typeof data.pipeline === 'object' ? data.pipeline : {};
   gate1bMetrics = data.gate1b && typeof data.gate1b === 'object' ? data.gate1b : {};
   operationalStats = data.stats && typeof data.stats === 'object' ? data.stats : {};
+  processOverview = data.process_overview && typeof data.process_overview === 'object' ? data.process_overview : {};
   automationAudit = Array.isArray(data.automation_audit) ? data.automation_audit : [];
   hdReviewQueue = Array.isArray(data.hd_review_queue) ? data.hd_review_queue : [];
+  hdReviewProgress = data.hd_review_progress && typeof data.hd_review_progress === 'object'
+    ? data.hd_review_progress : {total: hdReviewQueue.length, completed: 0, remaining: hdReviewQueue.length};
   mapboxToken = typeof data.mapbox_access_token === 'string' ? data.mapbox_access_token : '';
   mergeReviewQueue(photos.filter(belongsToActiveQueue), Boolean(options.preserveReview));
   updateCatalogViews(options.renderReviewView !== false);
@@ -832,13 +945,6 @@ async function refreshStatus() {
   $('updated').textContent = `Last archive update · ${formatDate(data.updated_at)}`;
   const latest = data.latest || {};
   const verified = latest.verified || {};
-  [['images', 'image', 'image-check'], ['metadata', 'metadata', 'metadata-check'], ['checksums', 'checksum', 'checksum-check']].forEach(([valueId, field, checkId]) => {
-    const count = n(verified[field]);
-    $(valueId).textContent = count;
-    $(checkId).className = 'check' + (count > 0 ? ' verified' : '');
-    $(checkId).textContent = count > 0 ? '✓' : '·';
-  });
-  renderRuns(Array.isArray(data.recent_runs) ? data.recent_runs : []);
 }
 
 function showError(message) {
@@ -848,9 +954,17 @@ function showError(message) {
 
 async function initialize() {
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => showView(button.dataset.view)));
+  const closeOtherMenus=()=>document.querySelectorAll('.other-toggle').forEach(toggle=>{toggle.setAttribute('aria-expanded','false');const menu=$(toggle.getAttribute('aria-controls'));if(menu)menu.hidden=true;});
+  document.querySelectorAll('.other-toggle').forEach(toggle=>toggle.addEventListener('click',event=>{event.stopPropagation();const menu=$(toggle.getAttribute('aria-controls'));const open=toggle.getAttribute('aria-expanded')==='true';closeOtherMenus();toggle.setAttribute('aria-expanded',String(!open));if(menu)menu.hidden=open;}));
+  document.addEventListener('click',event=>{if(!event.target.closest('.other-nav,.bottom-nav'))closeOtherMenus();});
+  document.addEventListener('keydown',event=>{if(event.key === 'Escape')closeOtherMenus();});
   document.querySelectorAll('[data-open-view]').forEach(button => button.addEventListener('click', () => showView(button.dataset.openView)));
-  $('camera-filter').addEventListener('change', renderFilteredPhotos);
-  $('label-filter').addEventListener('change', renderFilteredPhotos);
+  ['photo-date-from','photo-date-to','photo-time-of-day','photo-hour-from','photo-hour-to','camera-filter','photo-species','photo-male-antler','photo-profile-status','photo-identity-status','photo-variant','photo-sort'].forEach(id=>$(id).addEventListener('change',schedulePhotoQuery));
+  $('photos-load-more').addEventListener('click',()=>fetchAllPhotos(true).catch(error=>showError(error.message)));
+  $('photo-reset').addEventListener('click',()=>{['photo-date-from','photo-date-to','photo-hour-from','photo-hour-to','camera-filter','photo-species','photo-male-antler','photo-profile-status','photo-identity-status','photo-variant'].forEach(id=>{$(id).value='';});$('photo-time-of-day').value='all';$('photo-sort').value='newest';schedulePhotoQuery();});
+  $('hd-location-filter').addEventListener('change',()=>renderHDReview());
+  $('deer-location-filter').addEventListener('change',()=>renderDeerProfiles());
+  $('profile-gallery-back').addEventListener('click', () => { profileGalleryRequestGeneration++; activeProfileId = null; $('profile-gallery').hidden = true; $('deer-grid').hidden = false; });
   document.querySelectorAll('[data-review-queue]').forEach(button => button.addEventListener('click', () => {
     activeReviewQueue = button.dataset.reviewQueue;
     mergeReviewQueue(photos.filter(belongsToActiveQueue), false);

@@ -11,6 +11,99 @@ MIGRATIONS = Path("supabase/migrations")
 
 
 class CatalogSchemaTests(unittest.TestCase):
+    def test_profile_gallery_page_is_profile_scoped_and_hard_bounded(self):
+        sql = Path("supabase/migrations/20260817190000_bounded_profile_gallery_page.sql").read_text().lower()
+        self.assertIn("deerid_profile_gallery_page", sql)
+        self.assertIn("p_profile_id uuid", sql)
+        self.assertIn("am.animal_profile_id=p_profile_id", sql)
+        self.assertIn("least(coalesce(p_limit,24),60)", sql)
+    def test_all_photos_followup_migration_implements_filters_and_uses_last_returned_cursor(self):
+        sql = Path("supabase/migrations/20260812221000_fix_all_photos_paging_filters.sql").read_text()
+        for field in ("p_time_of_day", "p_species", "p_male_antler", "p_profile_status", "p_identity_status", "p_sort"):
+            self.assertIn(field, sql)
+        self.assertIn("from ordered_page", sql)
+        self.assertNotIn("offset greatest(1,least(p_limit,60))", sql)
+
+    def test_profiling_progress_is_authoritative_by_camera(self):
+        sql = Path("supabase/migrations/20260812221500_profiling_location_progress.sql").read_text()
+        self.assertIn("'camera_id',m.camera_id", sql)
+        self.assertIn("'by_camera',by_camera.value", sql)
+        js = Path("public/app.js").read_text()
+        self.assertIn("n(byCamera[locationId])", js)
+        self.assertNotIn("locationQueue.length || remaining", js)
+
+    def test_profile_previews_and_model_evidence_are_authoritative(self):
+        sql = Path("supabase/migrations/20260812222000_authoritative_metrics_profile_previews.sql").read_text()
+        self.assertIn("profile_previews", sql)
+        self.assertIn("not exists(select 1 from deerid.hd_instance_profile_assignment_events n where n.supersedes_event_id=e.id)", sql)
+        self.assertIn("p.model_name='OpenAI-GPT-4o-mini-Vision'", sql)
+        self.assertIn("p.model_version='gpt-4o-mini-2024-07-18@prompt-2026-08-12.1'", sql)
+
+    def test_profiling_queue_is_bounded_per_camera_not_globally(self):
+        sql = Path("supabase/migrations/20260812222500_profiling_queue_per_camera.sql").read_text()
+        self.assertIn("row_number() over(partition by m.camera_id", sql)
+        self.assertIn("where camera_rank<=", sql)
+
+    def test_authorized_hd_incident_replay_is_one_shot_and_bounded(self):
+        sql = Path("supabase/migrations/20260813113500_authorize_hd_incident_replay.sql").read_text()
+        self.assertIn("hd_review_retry_authorizations", sql)
+        self.assertIn("delete from deerid.hd_review_retry_authorizations where media_asset_id=chosen.id", sql)
+        self.assertIn("not exists(select 1 from deerid.hd_review_results", sql)
+        self.assertIn("p_media_asset_id is null or a.id=p_media_asset_id", sql)
+
+    def test_authorized_hd_incident_replay_skips_assets_absent_from_fresh_databases(self):
+        sql = Path("supabase/migrations/20260813113500_authorize_hd_incident_replay.sql").read_text().lower()
+        self.assertIn("join deerid.media_assets", sql)
+
+    def test_operational_gate1b_policy_tracks_current_pinned_model_and_backfills_hd(self):
+        sql = Path("supabase/migrations/20260812223000_align_operational_gate1b_policy.sql").read_text()
+        self.assertIn("OpenAI-GPT-4o-mini-Vision", sql)
+        self.assertIn("gpt-4o-mini-2024-07-18@prompt-2026-08-12.1", sql)
+        self.assertIn("apply_gate1b_automation_prediction", sql)
+
+    def test_automatic_hd_completion_does_not_require_human_review_state(self):
+        sql = Path("supabase/migrations/20260812223500_complete_automatic_hd_requests.sql").read_text().lower()
+        self.assertIn("gate1b_automatic_likely_male", sql)
+        self.assertIn("status = 'submitted'", sql)
+        self.assertIn("review_version is null", sql)
+
+    def test_refresh_migrations_define_metrics_paged_photos_and_representatives(self):
+        sql = "\n".join(path.read_text().lower() for path in MIGRATIONS.glob("20260812*site_refresh*.sql"))
+        for required in ("deerid_process_overview", "deerid_all_photos", "profile_representative_events", "deerid_set_profile_representative", "p_camera_id", "p_cursor"):
+            self.assertIn(required, sql)
+        self.assertIn("camera_id", sql)
+        self.assertIn("first_seen", sql)
+        self.assertIn("last_seen", sql)
+
+    def test_profile_gallery_and_reassignment_are_instance_scoped_and_auditable(self):
+        sql = (MIGRATIONS / "20260812150000_hd_review_profile_gallery.sql").read_text(encoding="utf-8").lower()
+        for required in (
+            "create table deerid.hd_instance_profile_assignment_events",
+            "supersedes_event_id bigint",
+            "create or replace function public.deerid_profile_gallery",
+            "create or replace function public.deerid_reassign_hd_instance",
+            "crop_recipe",
+            "hd_animal_instance_id",
+        ):
+            self.assertIn(required, sql)
+        self.assertIn("action in ('assign','reassign')", sql)
+        self.assertIn("order by e.created_at desc,e.id desc", sql)
+
+    def test_hd_queue_uses_latest_analysis_and_hides_resolved_or_profile_assigned_instances(self):
+        sql = (MIGRATIONS / "20260812180000_remove_classified_hd_assets_from_review.sql").read_text(encoding="utf-8").lower()
+        queue = sql.split("create or replace function public.deerid_hd_review_queue", 1)[1]
+        self.assertIn("distinct on (r.media_asset_id)", queue)
+        self.assertIn("hd_instance_profile_assignment_events", queue)
+        self.assertIn("assigned_i.media_asset_id=r.media_asset_id", queue)
+        self.assertIn("d.action<>'defer'", queue)
+
+    def test_gpt_rerun_claim_excludes_only_assets_classified_to_profiles(self):
+        sql = (MIGRATIONS / "20260812150000_hd_review_profile_gallery.sql").read_text(encoding="utf-8").lower()
+        claim = sql.split("create or replace function public.deerid_claim_hd_review", 1)[1].split("create or replace function public.deerid_hd_review_queue", 1)[0]
+        self.assertIn("hd_instance_profile_assignment_events", claim)
+        self.assertIn("current_event.animal_profile_id is not null", claim)
+        self.assertNotIn("hd_review_decisions d", claim)
+
     def test_multi_animal_hd_migration_creates_instance_scoped_review_and_assignments(self):
         sql = (MIGRATIONS / "20260812010000_multi_animal_hd_review.sql").read_text(encoding="utf-8").lower()
         for required in (

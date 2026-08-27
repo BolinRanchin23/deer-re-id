@@ -26,7 +26,9 @@ def main():
   for _ in range(20):
    done=subprocess.run([sys.executable,"-m","reveal_downloader.hd_analysis_worker"],cwd=REPO,env=env,check=False,capture_output=True,text=True,timeout=900)
    if done.returncode: raise RuntimeError(done.stderr.strip() or "HD worker failed")
-   result=json.loads(done.stdout)
+   lines=[line for line in done.stdout.splitlines() if line.strip()]
+   try: result=json.loads(lines[-1])
+   except (IndexError,json.JSONDecodeError) as exc: raise RuntimeError(done.stderr.strip() or "HD worker returned invalid output") from exc
    if result.get("empty"): break
    failures+=int(result.get("failed",0))
   if failures: raise RuntimeError(f"returned-HD worker recorded {failures} failure(s)")

@@ -14,7 +14,7 @@ class handler(BaseHTTPRequestHandler):
         status, content_type, body = handle_library_preview(os.environ, token)
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("Cache-Control", "private, max-age=300, immutable" if status == 200 else "private, no-store")
         self.send_header("Content-Security-Policy", "default-src 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")

@@ -10,6 +10,18 @@
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     },
     "api/library.py": {
+      "maxDuration": 30,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/photos.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/profile_gallery.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/profile_representative.py": {
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     },
@@ -29,6 +41,10 @@
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     },
+    "api/profile_reassignment.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
     "api/automation_label.py": {
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
@@ -41,11 +57,18 @@
       "maxDuration": 300,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     },
+    "api/gate1b_cron.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
     "api/hd_requests.py": {
       "maxDuration": 60,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     }
   },
+  "crons": [
+    {"path": "/api/gate1b_cron", "schedule": "*/15 * * * *"}
+  ],
   "headers": [
     {
       "source": "/",

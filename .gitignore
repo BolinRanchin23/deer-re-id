@@ -1,6 +1,7 @@
 # Existing repository-local files
 *.har
 .claude/
+.hermes/
 .vercel/
 .python-version
 uv.lock

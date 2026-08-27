@@ -130,12 +130,16 @@
     .review-stage { position: relative; width: min(920px, 100%); margin: 0 auto; overflow: hidden; min-height: 620px; }
     #hd-review-stage { display: grid; gap: 18px; overflow: visible; }
     .hd-review-card { overflow: hidden; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .7fr); }
+    .hd-progress { width: min(920px, 100%); margin: 0 auto 14px; padding: 13px 15px; }
+    .hd-progress-copy { margin-bottom: 8px; color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
+    .hd-progress-track { height: 9px; overflow: hidden; border-radius: 999px; background: #090a09; }
+    .hd-progress-bar { height: 100%; width: 0; border-radius: inherit; background: var(--moss-bright); transition: width .2s ease; }
     .hd-instance-crop { position: relative; align-self: center; background: #090a09; }
     .hd-context-box { position: absolute; border: 2px solid var(--moss-bright); border-radius: 6px; box-shadow: 0 0 0 9999px rgba(0,0,0,.18); pointer-events: none; }
     .hd-review-image { width: 100%; height: auto; display: block; object-fit: contain; }
     .hd-instance-visual { min-width: 0; padding: 12px; display: grid; grid-template-rows: minmax(320px, 1fr) auto; gap: 10px; background: #090a09; }
     .hd-instance-crop { position: relative; width: 100%; overflow: hidden; border-radius: 10px; background: #050605; }
-    .hd-instance-crop img { position: absolute; max-width: none; height: auto; object-fit: contain; }
+    .hd-instance-crop canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
     .hd-instance-context { position: relative; width: min(360px, 100%); justify-self: center; line-height: 0; }
     .hd-instance-context img { width: 100%; height: auto; display: block; border-radius: 8px; opacity: .82; }
     .hd-review-image { width: 100%; height: auto; display: block; object-fit: contain; object-position: center; }
@@ -183,9 +187,21 @@
     .deer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .deer-card { overflow: hidden; }
     .deer-card > img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
-    .profile-thumbnail-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; padding: 3px; background: #090a09; }
-    .profile-thumbnail-strip img { width: 100%; aspect-ratio: 1; display: block; object-fit: cover; border-radius: 6px; }
+    .profile-thumbnail-strip { display: block; aspect-ratio: 1; background: #090a09; }
+    .profile-thumbnail-strip img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .profile-thumbnail-strip.representative-photo { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 1; overflow: hidden; background: #090a09; }
+    .profile-representative-crop { width: 100%; height: 100%; aspect-ratio: auto !important; display: grid; place-items: center; overflow: hidden; background: #090a09; }
+    .profile-representative-crop canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: contain; object-position: center; }
     .deer-card .photo-meta { min-height: 88px; }
+    .deer-card { cursor: pointer; }
+    .profile-gallery-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .profile-gallery-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .profile-gallery-card { overflow: hidden; }
+    .profile-gallery-card > img { width: 100%; aspect-ratio: 4/3; display: block; object-fit: contain; background: #090a09; }
+    .profile-gallery-crop { position: relative; width: 100%; height: min(30vh, 280px); overflow: hidden; background: #090a09; }
+    .profile-gallery-crop canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
+    .profile-gallery-controls { padding: 10px; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .profile-gallery-controls select, .profile-gallery-controls button { min-height: 40px; min-width: 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel-2); }
     .integrity { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .integrity-card { padding: 16px; display: flex; align-items: center; justify-content: space-between; }
     .integrity-name { display: flex; align-items: center; gap: 9px; }
@@ -229,6 +245,7 @@
       .funnel-outcomes { grid-template-columns: 1fr; }
       .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
       .deer-grid { grid-template-columns: 1fr; }
+      .profile-gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .review-stage { min-height: 0; }
       #hd-review-stage { width: 100%; }
       .hd-review-card { display: block; }
@@ -259,6 +276,9 @@
       .photo-meta { padding: 10px; }
       .camera-list { grid-template-columns: 1fr; }
     }
+    .process-window{margin-top:28px}.process-flow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.process-stage{padding:18px;display:grid;gap:8px}.process-stage span{color:var(--moss-bright)}.process-stage strong{font-size:30px}.process-stage small{color:var(--muted)}
+    .other-nav{position:relative}.other-menu{display:grid;position:absolute;z-index:20;left:0;right:0;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}.photo-filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}.profile-summary{padding:18px;margin-bottom:14px}.profile-gallery-card{position:relative}.gallery-menu-button{position:absolute;right:8px;top:8px;z-index:2}.hd-instance-visual{grid-template-columns:1fr 1fr;grid-template-rows:auto}.hd-primary-actions{display:flex;gap:10px}.hd-primary-actions button{min-width:52px;min-height:52px}dialog{color:var(--ink);border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:22px}dialog::backdrop{background:rgba(0,0,0,.7)}dialog form{display:grid;gap:10px;min-width:min(420px,80vw)}#profile-picker-dialog form{width:min(440px,82vw);max-height:78vh}.profile-picker-section{display:grid;gap:6px}.profile-picker-section h3{margin:8px 0 2px;color:var(--muted);font:600 10px/1.3 ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase}.profile-picker-section:first-child h3{color:var(--moss-bright)}#profile-picker-list{display:grid;gap:14px;overflow-y:auto}.profile-picker-option{min-height:44px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;color:var(--ink);background:var(--panel-2);cursor:pointer;text-align:left}.profile-picker-option:hover{border-color:var(--moss);background:var(--moss-wash)}
+    @media(max-width:780px){.process-flow{grid-template-columns:1fr}.bottom-nav{grid-template-columns:repeat(4,1fr)}.mobile-other-menu{position:fixed;left:12px;right:12px;bottom:76px}.hd-instance-visual{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -276,13 +296,10 @@
     <aside class="sidebar" aria-label="Workspace navigation">
       <div class="side-label">Workspace</div>
       <nav class="nav-list">
-        <button class="nav-button active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Overview</span></button>
-        <button class="nav-button" data-view="review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h14v16H5zM8 9l2 2 5-5M8 15h8"/></svg><span>Review</span><span id="review-nav-count" class="count">0</span></button>
-        <button class="nav-button" data-view="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM8 9h8M8 13h8"/></svg><span>Automation audit</span></button>
-        <button class="nav-button" data-view="hdreview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM8 15l3-3 3 3 2-2 2 2"/></svg><span>Returned HD</span></button>
-        <button class="nav-button" data-view="deer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 3c2 2 3 4 3 7M17 3c-2 2-3 4-3 7M5 6l4 2M19 6l-4 2M8 11c1-2 7-2 8 0 1 5-1 8-4 10-3-2-5-5-4-10Z"/></svg><span>Deer</span><span id="deer-nav-count" class="count">0</span></button>
-        <button class="nav-button" data-view="cameras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16v11H4zM8 8l2-3h4l2 3M12 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg><span>Cameras</span><span id="camera-nav-count" class="count">0</span></button>
-        <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span><span id="photo-nav-count" class="count">0</span></button>
+        <button class="nav-button active" data-view="overview"><span>Big Picture</span></button>
+        <button class="nav-button" data-view="hdreview"><span>Profiling</span></button>
+        <button class="nav-button" data-view="deer"><span>Deer</span><span id="deer-nav-count" class="count">0</span></button>
+        <div class="other-nav"><button class="nav-button other-toggle" type="button" aria-expanded="false" aria-controls="desktop-other-menu"><span>Other</span><span aria-hidden="true">⌄</span></button><div id="desktop-other-menu" class="other-menu" hidden><button class="nav-button" data-view="photos">All Photos</button><button class="nav-button" data-view="cameras">Cameras</button><button class="nav-button" data-view="audit">Automation Audit</button></div></div>
       </nav>
       <div class="sidebar-foot">Cloud thumbnails · immutable archive<br>Manual production sync</div>
     </aside>
@@ -291,40 +308,9 @@
       <div id="error" class="error-banner" role="alert"></div>
 
       <section id="view-overview" class="view" data-view-panel="overview">
-        <div class="view-head"><div><p class="eyebrow">Ranch workspace</p><h1>What happened in the field?</h1><p class="view-copy">A single view of recent captures, cameras, and the immutable archive behind them.</p></div><div id="updated" class="updated">Loading field data…</div></div>
-        <div class="metrics">
-          <article class="card metric"><div class="metric-label">Photos cataloged</div><div id="catalog-count" class="metric-value">—</div><div class="metric-detail">Most recent 50 shown</div></article>
-          <article class="card metric"><div class="metric-label">Needs review</div><div id="review-count" class="metric-value">—</div><div class="metric-detail">Gate 1 selected</div></article>
-          <article class="card metric"><div class="metric-label">Cameras reporting</div><div id="camera-count" class="metric-value">—</div><div class="metric-detail">Latest mapped cameras</div></article>
-          <article class="card metric"><div class="metric-label">Archive health</div><div id="health" class="metric-value">—</div><div id="health-detail" class="metric-detail">Reading durable status</div></article>
-        </div>
-        <section class="section"><div class="section-head"><div><h2>Last 24 hours</h2><p class="section-copy">Live database counts, recalculated whenever the workspace loads.</p></div></div><div class="metrics">
-          <article class="card metric"><div class="metric-label">Photos received</div><div id="photos-24h" class="metric-value">—</div><div class="metric-detail">New provider captures cataloged</div></article>
-          <article class="card metric"><div class="metric-label">HD photos requested</div><div id="hd-requests-24h" class="metric-value">—</div><div class="metric-detail">Human-approved Reveal requests</div></article>
-          <article class="card metric"><div class="metric-label">HD photos available</div><div id="hd-available-24h" class="metric-value">—</div><div class="metric-detail">Linked HD assets received</div></article>
-        </div></section>
-        <section class="section"><div class="section-head"><div><h2>Gate 1 narrowing</h2><p id="pipeline-model" class="section-copy">Loading model pipeline…</p></div></div>
-          <div class="funnel">
-            <article class="card funnel-stage"><div><div class="funnel-step">01 · Archive</div><div id="pipeline-total" class="funnel-value">—</div></div><div class="funnel-label">Cloud thumbnails retained</div></article>
-            <div class="funnel-arrow" aria-hidden="true">→</div>
-            <article class="card funnel-stage"><div><div class="funnel-step">02 · Model gate</div><div id="pipeline-assessed" class="funnel-value">—</div></div><div class="funnel-label">Photos assessed</div></article>
-            <div class="funnel-arrow" aria-hidden="true">→</div>
-            <article class="card funnel-stage"><div><div class="funnel-step">03 · Human queue</div><div id="pipeline-review" class="funnel-value">—</div></div><div class="funnel-label">Representative events selected</div></article>
-          </div>
-          <div class="funnel-outcomes">
-            <article class="card funnel-outcome"><span>Burst duplicates suppressed</span><strong id="pipeline-duplicates">—</strong></article>
-            <article class="card funnel-outcome"><span>Blank / below threshold</span><strong id="pipeline-blanks">—</strong></article>
-            <article class="card funnel-outcome"><span>Non-target wildlife</span><strong id="pipeline-nontarget">—</strong></article>
-            <article class="card funnel-outcome"><span>Awaiting model</span><strong id="pipeline-pending">—</strong></article>
-          </div>
-        </section>
-        <section class="section"><div class="section-head"><div><h2>Latest from the ranch</h2><p class="section-copy">Newest archived thumbnails, before HD is requested.</p></div><button class="control" data-open-view="photos">View all photos</button></div><div id="recent-photos" class="photo-grid"><div class="card empty"><div class="empty-inner">Loading recent captures…</div></div></div></section>
-        <section class="section"><div class="section-head"><div><h2>Archive integrity</h2><p class="section-copy">A capture is complete only when all three private objects verify.</p></div></div><div class="integrity">
-          <article class="card integrity-card"><div class="integrity-name"><span id="image-check" class="check">·</span><span>Photo image</span></div><strong id="images" class="integrity-count">—</strong></article>
-          <article class="card integrity-card"><div class="integrity-name"><span id="metadata-check" class="check">·</span><span>Metadata JSON</span></div><strong id="metadata" class="integrity-count">—</strong></article>
-          <article class="card integrity-card"><div class="integrity-name"><span id="checksum-check" class="check">·</span><span>SHA-256 marker</span></div><strong id="checksums" class="integrity-count">—</strong></article>
-        </div></section>
-        <section class="section"><div class="section-head"><div><h2>Recent ingestion runs</h2><p class="section-copy">Durable outcomes from manually triggered synchronization.</p></div></div><div class="card table-wrap"><table><thead><tr><th>Completed</th><th>Status</th><th>Downloaded</th><th>Verified</th><th>Failed</th></tr></thead><tbody id="runs"><tr><td colspan="5">Loading run history…</td></tr></tbody></table></div></section>
+        <div class="view-head"><div><p class="eyebrow">Big Picture</p><h1>Process Overview</h1></div><div id="updated" class="updated">Loading process data…</div></div>
+        <section class="process-window"><h2>Last 24 hours</h2><div class="process-flow"><article class="card process-stage"><span>1</span><strong id="24h-photos">—</strong><small>Photos received</small></article><article class="card process-stage"><span>2</span><strong id="24h-male">—</strong><small>Male deer / visible antlers</small></article><article class="card process-stage"><span>3</span><strong id="24h-crops">—</strong><small>Animal crops</small></article><article class="card process-stage"><span>4</span><strong id="24h-hd">—</strong><small>HD photos requested</small></article><article class="card process-stage"><span>5</span><strong id="24h-profiles">—</strong><small>Deer profiles</small></article></div></section>
+        <section class="process-window"><h2>Last 7 days</h2><div class="process-flow"><article class="card process-stage"><span>1</span><strong id="7d-photos">—</strong><small>Photos received</small></article><article class="card process-stage"><span>2</span><strong id="7d-male">—</strong><small>Male deer / visible antlers</small></article><article class="card process-stage"><span>3</span><strong id="7d-crops">—</strong><small>Animal crops</small></article><article class="card process-stage"><span>4</span><strong id="7d-hd">—</strong><small>HD photos requested</small></article><article class="card process-stage"><span>5</span><strong id="7d-profiles">—</strong><small>Deer profiles</small></article></div></section>
       </section>
 
       <section id="view-review" class="view" data-view-panel="review" hidden>
@@ -342,13 +328,15 @@
       </section>
 
       <section id="view-hdreview" class="view" data-view-panel="hdreview" hidden>
-        <div class="view-head"><div><p class="eyebrow">Returned HD</p><h1>Profile review</h1><p class="view-copy">Create a new season profile, match an existing profile, or reject images that are not identity-worthy.</p></div></div>
+        <div class="view-head"><div><p class="eyebrow">Returned HD</p><h1>Profiling</h1></div><label>Location <select id="hd-location-filter" class="control"><option value="">All Locations</option></select></label></div>
+        <div id="hd-review-progress" class="card hd-progress"><div id="hd-review-progress-copy" class="hd-progress-copy">Loading progress…</div><div class="hd-progress-track"><div id="hd-review-progress-bar" class="hd-progress-bar" role="progressbar" aria-label="Returned HD profile review progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div></div>
         <div id="hd-review-stage" class="review-stage"></div>
       </section>
 
       <section id="view-deer" class="view" data-view-panel="deer" hidden>
         <div class="view-head"><div><p class="eyebrow">Identity workspace</p><h1>Deer profiles</h1><p class="view-copy">Season-scoped identities built from human-confirmed photos—not automatic guesses.</p></div><div id="deer-summary" class="updated">Loading profiles…</div></div>
-        <div id="deer-grid" class="deer-grid"></div>
+        <label>Location <select id="deer-location-filter" class="control"><option value="">All Locations</option></select></label><div id="deer-grid" class="deer-grid"></div>
+        <section id="profile-gallery" hidden><div class="profile-gallery-head"><button id="profile-gallery-back" class="control" type="button">← Profiles</button><h2 id="profile-gallery-title">Deer photos</h2></div><div id="profile-summary" class="card profile-summary"></div><div id="profile-gallery-grid" class="profile-gallery-grid"></div></section>
       </section>
 
       <section id="view-cameras" class="view" data-view-panel="cameras" hidden>
@@ -358,23 +346,19 @@
       </section>
 
       <section id="view-photos" class="view" data-view-panel="photos" hidden>
-        <div class="view-head"><div><p class="eyebrow">Photo archive</p><h1>Every verified capture</h1><p class="view-copy">Browse inexpensive cloud thumbnails first; preserve originals and richer variants separately.</p></div></div>
-        <div class="section-head"><div id="photo-summary" class="section-copy">Loading catalog…</div><div class="toolbar"><select id="camera-filter" class="control" aria-label="Filter by camera"><option value="">All cameras</option></select><select id="label-filter" class="control" aria-label="Filter by review status"><option value="">All photos</option><option value="review">Needs review</option><option value="labeled">Labeled</option></select></div></div>
-        <div id="library-view" class="photo-grid"></div>
+        <div class="view-head"><div><p class="eyebrow">Photo archive</p><h1>All Photos</h1><p class="view-copy">Server-filtered model evidence and human-confirmed associations across the archive.</p></div></div>
+        <div class="photo-filters"><input id="photo-date-from" class="control" type="date" aria-label="Date from"><input id="photo-date-to" class="control" type="date" aria-label="Date to"><select id="photo-time-of-day" class="control"><option value="all">All times</option><option value="day">Day</option><option value="night">Night</option></select><input id="photo-hour-from" class="control" type="number" min="0" max="23" placeholder="Hour from"><input id="photo-hour-to" class="control" type="number" min="0" max="23" placeholder="Hour to"><select id="camera-filter" class="control"><option value="">All locations</option></select><select id="photo-species" class="control"><option value="">Any model-predicted species</option><option value="deer">Any deer</option><option value="whitetail">Whitetail</option><option value="axis">Axis</option><option value="non_deer">Non-deer</option></select><select id="photo-male-antler" class="control"><option value="">Any sex / antlers</option><option value="yes">Male or antlers</option><option value="no">No male / antler evidence</option></select><select id="photo-profile-status" class="control"><option value="">Any profiling status</option><option value="assigned">Profile assigned</option><option value="unassigned">Not profiled</option></select><select id="photo-identity-status" class="control"><option value="">Any identity quality</option><option value="viable">Identity candidate</option><option value="not_viable">Not identity-worthy</option></select><select id="photo-variant" class="control"><option value="">Any image variant</option><option value="cloud_thumbnail">Thumbnail</option><option value="cloud_hd">Returned HD</option></select><select id="photo-sort" class="control"><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="time_asc">Time of day ↑</option><option value="time_desc">Time of day ↓</option></select><button id="photo-reset" class="control">Reset</button></div>
+        <div id="photo-summary" class="section-copy">Loading catalog…</div><div id="library-view" class="photo-grid"></div><button id="photos-load-more" class="control" hidden>Load more</button>
       </section>
     </main>
   </div>
 
   <nav class="bottom-nav" aria-label="Mobile workspace navigation">
-    <button class="nav-button active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Overview</span></button>
-    <button class="nav-button" data-view="review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h14v16H5zM8 9l2 2 5-5M8 15h8"/></svg><span>Review</span></button>
-    <button class="nav-button" data-view="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM8 9h8M8 13h8"/></svg><span>Audit</span></button>
-    <button class="nav-button" data-view="hdreview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM8 15l3-3 3 3 2-2 2 2"/></svg><span>HD</span></button>
-    <button class="nav-button" data-view="deer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 3c2 2 3 4 3 7M17 3c-2 2-3 4-3 7M5 6l4 2M19 6l-4 2M8 11c1-2 7-2 8 0 1 5-1 8-4 10-3-2-5-5-4-10Z"/></svg><span>Deer</span></button>
-    <button class="nav-button" data-view="cameras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16v11H4zM8 8l2-3h4l2 3M12 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg><span>Cameras</span></button>
-    <button class="nav-button" data-view="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg><span>Photos</span></button>
+    <button class="nav-button active" data-view="overview"><span>Big Picture</span></button><button class="nav-button" data-view="hdreview"><span>Profiling</span></button><button class="nav-button" data-view="deer"><span>Deer</span></button><button class="nav-button other-toggle" type="button" aria-expanded="false" aria-controls="mobile-other-menu"><span>Other</span></button><div id="mobile-other-menu" class="other-menu mobile-other-menu" hidden><button data-view="photos">All Photos</button><button data-view="cameras">Cameras</button><button data-view="audit">Automation Audit</button></div>
   </nav>
+  <dialog id="create-profile-dialog"><form method="dialog" id="create-profile-form"><h2>Create profile</h2><input id="create-profile-name" required maxlength="80" autofocus placeholder="Deer name"><select id="create-profile-species"><option value="white-tailed deer">Whitetail</option><option value="axis deer">Axis deer</option></select><select id="create-profile-sex"><option value="male">Male</option><option value="female">Female</option><option value="unknown">Unknown</option></select><button value="submit">Create</button><button value="cancel">Cancel</button></form></dialog>
+  <dialog id="profile-picker-dialog"><form method="dialog"><h2 id="profile-picker-title">Assign profile</h2><input id="profile-picker-search" type="search" placeholder="Search profiles"><div id="profile-picker-list"></div><button value="cancel">Cancel</button></form></dialog>
   <script src="/vendor/leaflet/leaflet.js" defer></script>
-  <script src="/app.js?v=15" defer></script>
+  <script src="/app.js?v=22" defer></script>
 </body>
 </html>
