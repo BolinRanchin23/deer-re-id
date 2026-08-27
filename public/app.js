@@ -777,14 +777,29 @@ function renderHDReview(animate = false) {
     heading.textContent = `${result.species || 'Unknown deer'} · ${result.sex || 'unknown sex'}`;
     const modelDetails = document.createElement('details'); modelDetails.className='hd-model-details';
     const modelSummary=document.createElement('summary'); modelSummary.textContent='View full model analysis';
+    const modelAnalysis=document.createElement('div'); modelAnalysis.className='hd-model-analysis';
+    const description=document.createElement('section'); description.className='hd-model-description';
+    const descriptionHeading=document.createElement('h4'); descriptionHeading.textContent='Identity description';
     const summaryCopy=document.createElement('p'); summaryCopy.textContent=result.summary||'Analysis pending';
+    description.append(descriptionHeading,summaryCopy);
     const ageCues = (result.age_cues || []).join(', ') || 'not assessable';
-    const technicalDetails = document.createElement('p');
-    technicalDetails.textContent = `View: ${result.view_angle || 'unknown'} · visible tines L/R: ${result.visible_tines_left ?? '—'}/${result.visible_tines_right ?? '—'} · ${result.tine_count_limitations || 'visibility limitations not recorded'} · Antlers: ${result.antler_structure || 'not described'} · Age: ${result.age_class || 'unknown'} (${ageCues})`;
+    const facts=document.createElement('dl'); facts.className='hd-model-facts';
+    [
+      ['View',result.view_angle||'unknown'],
+      ['Visible tines',`Left ${result.visible_tines_left ?? '—'} · Right ${result.visible_tines_right ?? '—'}`],
+      ['Antlers',result.antler_structure||'not described'],
+      ['Visibility limits',result.tine_count_limitations||'not recorded'],
+      ['Age class',result.age_class||'unknown'],
+      ['Age cues',ageCues]
+    ].forEach(([label,value])=>{const fact=document.createElement('div');const term=document.createElement('dt');term.textContent=label;const detail=document.createElement('dd');detail.textContent=value;fact.append(term,detail);facts.appendChild(fact);});
+    const detectionSection=document.createElement('section'); detectionSection.className='hd-model-detection';
+    const detectionHeading=document.createElement('h4'); detectionHeading.textContent='Detection';
     const detection = document.createElement('p');
     detection.className = item.detection_complete ? 'hd-detection-ok' : 'hd-detection-warning';
     detection.textContent = item.detection_complete ? item.detection_notes : `Detector needs human attention: ${item.detection_notes}`;
-    modelDetails.append(modelSummary, summaryCopy, technicalDetails, detection);
+    detectionSection.append(detectionHeading,detection);
+    modelAnalysis.append(description,facts,detectionSection);
+    modelDetails.append(modelSummary,modelAnalysis);
 
     const decisionPrompt = document.createElement('p'); decisionPrompt.className='hd-decision-prompt'; decisionPrompt.textContent='What should happen with this deer?';
     const controls = document.createElement('div'); controls.className='hd-primary-actions';

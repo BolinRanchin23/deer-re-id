@@ -180,9 +180,20 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         compact = "".join(review.split())
         self.assertIn("What should happen with this deer?", review)
         self.assertIn("View full model analysis", review)
-        self.assertIn("modelDetails.append(modelSummary,summaryCopy,technicalDetails,detection)", compact)
+        self.assertIn("modelDetails.append(modelSummary,modelAnalysis)", compact)
         self.assertNotIn("modelDetails.open", review)
         self.assertIn("meta.append(instance,heading,decisionPrompt,controls,modelDetails)", compact)
+
+    def test_expanded_model_analysis_uses_scannable_labeled_sections(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        review = app_js.split("function renderHDReview", 1)[1].split("async function submitHDReviewDecision", 1)[0]
+        for label in ("Identity description", "View", "Visible tines", "Antlers", "Visibility limits", "Age class", "Age cues", "Detection"):
+            self.assertIn(label, review)
+        self.assertIn("hd-model-facts", review)
+        self.assertIn("document.createElement('dt')", review)
+        self.assertIn("document.createElement('dd')", review)
+        self.assertIn(".hd-model-facts", html)
 
     def test_existing_profile_picker_suggests_profiles_seen_at_the_photo_location(self):
         app_js = Path("public/app.js").read_text(encoding="utf-8")
