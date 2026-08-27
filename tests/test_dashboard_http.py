@@ -161,9 +161,28 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         app_js = Path("public/app.js").read_text(encoding="utf-8")
         review = app_js.split("function renderHDReview", 1)[1].split("async function submitHDReviewDecision", 1)[0]
         compact = "".join(review.split())
-        self.assertIn("meta.append(instance,heading,controls,summary,details,detection)", compact)
-        self.assertIn("skip.textContent='NotID-worthy'", compact)
+        self.assertIn("meta.append(instance,heading,decisionPrompt,controls,modelDetails)", compact)
+        self.assertIn("skip.textContent='Notidentifiable'", compact)
         self.assertNotIn("setAttribute('aria-label','Moreactions')", compact)
+
+    def test_returned_hd_actions_use_explicit_decision_labels(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        review = app_js.split("function renderHDReview", 1)[1].split("async function submitHDReviewDecision", 1)[0]
+        self.assertIn("Match existing deer", review)
+        self.assertIn("Create new deer", review)
+        self.assertIn("Not identifiable", review)
+        self.assertNotIn("create.textContent='+'", "".join(review.split()))
+        self.assertNotIn("match.textContent='✎'", "".join(review.split()))
+
+    def test_returned_hd_defaults_to_a_simple_decision_with_expandable_model_analysis(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        review = app_js.split("function renderHDReview", 1)[1].split("async function submitHDReviewDecision", 1)[0]
+        compact = "".join(review.split())
+        self.assertIn("What should happen with this deer?", review)
+        self.assertIn("View full model analysis", review)
+        self.assertIn("modelDetails.append(modelSummary,summaryCopy,technicalDetails,detection)", compact)
+        self.assertNotIn("modelDetails.open", review)
+        self.assertIn("meta.append(instance,heading,decisionPrompt,controls,modelDetails)", compact)
 
     def test_existing_profile_picker_suggests_profiles_seen_at_the_photo_location(self):
         app_js = Path("public/app.js").read_text(encoding="utf-8")
@@ -179,12 +198,28 @@ class DashboardHttpAdapterTests(unittest.TestCase):
     def test_returned_hd_review_is_scoped_to_one_animal_instance(self):
         html = Path("public/index.html").read_text(encoding="utf-8")
         app_js = Path("public/app.js").read_text(encoding="utf-8")
-        self.assertIn("Animal ${item.instance_index} of ${item.instance_count}", app_js)
+        self.assertIn("Reviewing deer ${item.instance_index} of ${item.instance_count} from this photo", app_js)
         self.assertIn("hd-instance-crop", app_js)
         self.assertIn("hd-context-box", app_js)
         self.assertIn("item.hd_animal_instance_id", app_js)
-        self.assertIn("One deer at a time", app_js)
+
         self.assertIn(".hd-context-box", html)
+
+    def test_returned_hd_review_states_which_deer_from_the_photo_is_being_reviewed(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        self.assertIn("Reviewing deer ${item.instance_index} of ${item.instance_count} from this photo", app_js)
+
+    def test_returned_hd_visuals_label_the_selected_crop_and_original_photo(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        review = app_js.split("function renderHDReview", 1)[1].split("async function submitHDReviewDecision", 1)[0]
+        self.assertIn("Selected deer crop", review)
+        self.assertIn("Original photo", review)
+
+    def test_original_photo_highlight_container_does_not_stretch_away_from_the_image(self):
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        compact = "".join(html.split())
+        self.assertIn(".hd-instance-context{position:relative", compact)
+        self.assertIn("align-self:start", compact.split(".hd-instance-context{position:relative", 1)[1].split("}", 1)[0])
 
     def test_review_badge_counts_only_actionable_cards_and_explains_model_backlog(self):
         app_js = Path("public/app.js").read_text(encoding="utf-8")

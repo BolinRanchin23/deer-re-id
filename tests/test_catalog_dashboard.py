@@ -940,7 +940,12 @@ class Gate1ReviewUiTests(unittest.TestCase):
         self.assertIn(".hd-review-image", html)
         self.assertIn("object-fit: contain", html)
         self.assertIn("height: auto", html)
-        self.assertIn("aria-label','Create profile'", script)
+        review = script.split("function renderHDReview", 1)[1].split("async function submitHDReviewDecision", 1)[0]
+        self.assertIn("create.textContent='Create new deer'", review)
+        self.assertIn("match.textContent='Match existing deer'", review)
+        self.assertIn("skip.textContent='Not identifiable'", review)
+        controls = review.split("const controls", 1)[1].split("controls.append", 1)[0]
+        self.assertNotIn("setAttribute('aria-label'", controls)
 
     def test_automation_audit_label_is_append_only_and_action_specific(self):
         catalog = MemoryCatalog()
