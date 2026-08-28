@@ -11,6 +11,12 @@ MIGRATIONS = Path("supabase/migrations")
 
 
 class CatalogSchemaTests(unittest.TestCase):
+    def test_all_photos_forces_parameter_aware_query_plans(self):
+        sql = (MIGRATIONS / "20260828181500_optimize_all_photos_query.sql").read_text()
+        self.assertIn("deerid_all_photos", sql)
+        self.assertIn("plan_cache_mode", sql)
+        self.assertIn("force_custom_plan", sql)
+
     def test_profile_gallery_page_is_profile_scoped_and_hard_bounded(self):
         sql = Path("supabase/migrations/20260817190000_bounded_profile_gallery_page.sql").read_text().lower()
         self.assertIn("deerid_profile_gallery_page", sql)
