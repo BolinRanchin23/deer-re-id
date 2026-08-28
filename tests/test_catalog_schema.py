@@ -17,6 +17,14 @@ class CatalogSchemaTests(unittest.TestCase):
         self.assertIn("plan_cache_mode", sql)
         self.assertIn("force_custom_plan", sql)
 
+    def test_all_photos_executes_with_a_fresh_parameter_aware_plan(self):
+        sql = (MIGRATIONS / "20260828183000_replan_all_photos_per_request.sql").read_text().lower()
+        self.assertIn("language plpgsql", sql)
+        self.assertIn("execute $query$", sql)
+        self.assertIn("using p_limit", sql)
+        self.assertIn("security definer", sql)
+        self.assertIn("set search_path=pg_catalog,public,deerid,pg_temp", sql)
+
     def test_profile_gallery_page_is_profile_scoped_and_hard_bounded(self):
         sql = Path("supabase/migrations/20260817190000_bounded_profile_gallery_page.sql").read_text().lower()
         self.assertIn("deerid_profile_gallery_page", sql)
