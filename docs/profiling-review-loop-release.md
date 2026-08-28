@@ -11,7 +11,7 @@ npx --yes vercel@latest build --prod --scope deer-intel-pro
 supabase db push --linked --dry-run
 ```
 
-Stop if any command fails or if the dry run lists anything other than `20260828023500_profiling_review_loop.sql`.
+Stop if any command fails or if the dry run lists anything other than `20260828150500_hd_instance_topology_corrections.sql`.
 
 ## 2. Apply the database migration first
 
@@ -25,6 +25,7 @@ Before deploying application code, verify through the service-role database conn
 select public.deerid_pipeline_health();
 select public.deerid_hd_review_progress();
 select public.deerid_hd_review_queue_page(1, null, 'active');
+select to_regprocedure('public.deerid_correct_hd_instance_topology(bigint,uuid,bigint,uuid,text,jsonb,text)') is not null;
 ```
 
 The queue response must contain `items`, `has_more`, and `progress`. Do not continue if `deerid_pipeline_health` or `deerid_hd_review_queue_page` is missing or errors.

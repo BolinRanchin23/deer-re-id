@@ -28,6 +28,13 @@ class VercelHttpAdapterTests(unittest.TestCase):
         self.assertEqual(config["functions"]["api/hd_review_workflow.py"]["maxDuration"], 10)
         self.assertEqual(config["functions"]["api/hd_profile_assignment_review.py"]["maxDuration"], 10)
         self.assertEqual(config["functions"]["api/hd_geometry_correction.py"]["maxDuration"], 10)
+        self.assertTrue(Path("api/hd_instance_topology.py").exists())
+        topology_module = importlib.import_module("api.hd_instance_topology")
+        self.assertTrue(issubclass(topology_module.handler, BaseHTTPRequestHandler))
+        self.assertEqual(config["functions"]["api/hd_instance_topology.py"]["maxDuration"], 10)
+        topology_source = Path("api/hd_instance_topology.py").read_text()
+        self.assertIn("required.issubset(payload)", topology_source)
+        self.assertIn("set(payload).issubset(allowed)", topology_source)
 
     def test_hd_mutation_adapters_do_not_normalize_falsey_malformed_fields(self):
         workflow = Path("api/hd_review_workflow.py").read_text()

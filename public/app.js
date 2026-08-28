@@ -778,7 +778,8 @@ function renderHDReview(animate = false) {
   const locationQueue = hdReviewQueue.filter(candidate => !locationId || candidate.camera_id === locationId);
   const byCamera = hdReviewProgress.by_camera && typeof hdReviewProgress.by_camera === 'object' ? hdReviewProgress.by_camera : {};
   const locationRemaining = locationId ? n(byCamera[locationId]) : remaining;
-  $('hd-review-progress-copy').textContent = locationId ? `${locationRemaining} unresolved animals at this location · queue-tab counts include all locations` : `${locationRemaining} animals remaining across all locations`;
+  const terminalSummary=`${n(hdReviewProgress.removed_detections)} false detections removed · ${n(hdReviewProgress.inseparable)} inseparable outcomes`;
+  $('hd-review-progress-copy').textContent = (locationId ? `${locationRemaining} unresolved animals at this location · queue-tab counts include all locations` : `${locationRemaining} animals remaining across all locations`) + ` · ${terminalSummary}`;
   const item = locationQueue[0];
   if (item) {
     const result = item.result || {};
@@ -824,11 +825,12 @@ function renderHDReview(animate = false) {
     instance.textContent = `Reviewing deer ${item.instance_index} of ${item.instance_count} from this photo`;
     const heading = document.createElement('strong');
     heading.textContent = `${result.species || 'Unknown deer'} · ${result.sex || 'unknown sex'}`;
+    const humanCreated=item.review_origin==='human_topology_correction',staleDescription=item.analysis_status==='stale_geometry';
     const modelDetails = document.createElement('details'); modelDetails.className='hd-model-details';
-    const modelSummary=document.createElement('summary'); modelSummary.textContent='View full model analysis';
+    const modelSummary=document.createElement('summary'); modelSummary.textContent=humanCreated?'View crop provenance':staleDescription?'View historical model analysis':'View full model analysis';
     const modelAnalysis=document.createElement('div'); modelAnalysis.className='hd-model-analysis';
     const description=document.createElement('section'); description.className='hd-model-description';
-    const descriptionHeading=document.createElement('h4'); descriptionHeading.textContent='Identity description';
+    const descriptionHeading=document.createElement('h4'); descriptionHeading.textContent=humanCreated?'Human-created review crop':staleDescription?'Historical description — crop changed':'Identity description';
     const summaryCopy=document.createElement('p'); summaryCopy.textContent=result.summary||'Analysis pending';
     description.append(descriptionHeading,summaryCopy);
     const ageCues = (result.age_cues || []).join(', ') || 'not assessable';
@@ -860,7 +862,12 @@ function renderHDReview(animate = false) {
       const issueDetails=document.createElement('p');issueDetails.className='hd-detection-warning';issueDetails.textContent=`Reported issue: ${String(item.workflow_reason||'other').replaceAll('_',' ')}${item.workflow_note?` · ${item.workflow_note}`:''}`;
       meta.append(instance,heading,issueDetails,decisionPrompt);
       const fixBox=document.createElement('button'); fixBox.type='button'; fixBox.textContent='Fix crop box'; fixBox.onclick=()=>openBBoxEditor(item);
-      const reopen=document.createElement('button'); reopen.type='button'; reopen.textContent='Return to active review'; reopen.onclick=()=>submitHDWorkflowAction(item,'reopen',reopen); controls.append(fixBox,reopen);
+      controls.appendChild(fixBox);
+      if(item.workflow_reason==='missed_deer'){const add=document.createElement('button');add.type='button';add.textContent='Add missed deer';add.onclick=()=>openTopologyEditor(item,'add');controls.appendChild(add);}
+      if(item.workflow_reason==='multiple_deer'){const split=document.createElement('button');split.type='button';split.textContent='Split merged detection';split.onclick=()=>openTopologyEditor(item,'split');controls.appendChild(split);}
+      if(item.workflow_reason==='false_detection'){const remove=document.createElement('button');remove.type='button';remove.textContent='Delete false detection';remove.onclick=()=>submitTerminalTopologyAction(item,'remove',remove);controls.appendChild(remove);}
+      if(item.workflow_reason==='inseparable'){const inseparable=document.createElement('button');inseparable.type='button';inseparable.textContent='Mark inseparable';inseparable.onclick=()=>submitTerminalTopologyAction(item,'inseparable',inseparable);controls.appendChild(inseparable);}
+      const reopen=document.createElement('button'); reopen.type='button'; reopen.textContent='Return to active review'; reopen.onclick=()=>submitHDWorkflowAction(item,'reopen',reopen); controls.appendChild(reopen);
     } else if (activeHDReviewQueue === 'deferred') {
       const reopen=document.createElement('button'); reopen.type='button'; reopen.textContent='Return to active review'; reopen.onclick=()=>submitHDWorkflowAction(item,'reopen',reopen); controls.append(reopen);
     } else {
@@ -948,6 +955,61 @@ function openBBoxEditor(item) {
   $('bbox-editor-reset').onclick=()=>{box={...sourceOriginal};render();};
   form.onsubmit=async event=>{event.preventDefault();const button=form.querySelector('button[value="submit"]');button.disabled=true;const data=await postJSON('/api/hd_geometry_correction',{action_token:item.action_token,hd_animal_instance_id:item.hd_animal_instance_id,geometry_event_id:item.geometry_event_id||null,bbox:box,reason:$('bbox-editor-reason').value,note:$('bbox-editor-note').value.trim()});button.disabled=false;if(!data.transportOK||!data.ok)return showError('Corrected crop could not be saved.');item.bbox=data.bbox;item.geometry_event_id=data.geometry_event_id;dialog.close();await refillHDReviewQueue(true);};
   dialog.showModal();
+}
+
+async function submitTopologyAction(item, action, boxes, note, button, requestId, switchToActive = false, ownerId = null) {
+  if (pendingHDReviewIds.has(item.hd_animal_instance_id)) return false;
+  pendingHDReviewIds.add(item.hd_animal_instance_id); if(button)button.disabled=true;
+  const data=await postJSON('/api/hd_instance_topology',{action_token:item.action_token,hd_animal_instance_id:item.hd_animal_instance_id,topology_event_id:item.topology_event_id||null,request_id:requestId,action,boxes,note});
+  pendingHDReviewIds.delete(item.hd_animal_instance_id);
+  if(!data.transportOK||!data.ok){if(button)button.disabled=false;if(data.status===409){const dialog=$('topology-editor-dialog');if(dialog?.open&&ownerId&&dialog.dataset.owner===ownerId)dialog.close();showError('This detection changed in another review. The queue was refreshed.');await refillHDReviewQueue(true);}else showError('Detection correction could not be saved. Retry without changing the boxes, or cancel to refresh.');return false;}
+  const ownsEditor=!ownerId||$('topology-editor-dialog')?.dataset.owner===ownerId;
+  if(switchToActive&&ownsEditor){const active=document.querySelector('[data-hd-queue="active"]');if(active)selectHDReviewQueue(active);else await refillHDReviewQueue(true);}
+  else await refillHDReviewQueue(true);
+  return true;
+}
+
+function openTopologyEditor(item, action) {
+  const dialog=$('topology-editor-dialog'),form=$('topology-editor-form'),stage=$('topology-editor-stage'),image=$('topology-editor-image'),original=$('topology-editor-original'),boxTarget=$('topology-editor-boxes'),preview=$('topology-editor-preview'),addBox=$('topology-editor-add-box'),removeBox=$('topology-editor-remove-box');
+  const source={...(item.bbox||{x:0,y:0,width:1,height:1})};
+  let boxes=action==='split'?[{x:source.x,y:source.y,width:source.width/2,height:source.height},{x:source.x+source.width/2,y:source.y,width:source.width/2,height:source.height}]:[{x:.35,y:.3,width:.3,height:.4}];
+  const ownerId=crypto.randomUUID();dialog.dataset.owner=ownerId;
+  let drag=null,lastFingerprint=null,retryRequestId=null,attempted=false,saved=false,submitting=false;
+  $('topology-editor-title').textContent=action==='split'?'Split merged detection':'Add missed deer';
+  $('topology-editor-help').textContent=(action==='split'?'Adjust one box around each deer. Add another box only when the merged detection contains more than two deer.':'Move and resize the box around the deer the detector missed.')+' Drag to move, use the corner handle to resize, or use Arrow keys to move and Shift+Arrow to resize.';
+  $('topology-editor-note').value='';addBox.hidden=removeBox.hidden=action!=='split';
+  const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
+  const place=(target,value)=>{target.style.left=`${100*value.x}%`;target.style.top=`${100*value.y}%`;target.style.width=`${100*value.width}%`;target.style.height=`${100*value.height}%`;};
+  const renderTopologyPreviews=()=>{preview.replaceChildren();boxes.forEach(box=>preview.appendChild(makeInstanceCrop({...item,bbox:box},'topology-editor-preview-crop')));};
+  const render=()=>{
+    place(original,source);boxTarget.replaceChildren();
+    boxes.forEach((box,index)=>{
+      const overlay=document.createElement('div');overlay.className='topology-editor-box';overlay.tabIndex=0;overlay.setAttribute('role','group');overlay.setAttribute('aria-label',`Editable deer box ${index+1}`);overlay.setAttribute('aria-describedby','topology-editor-help');place(overlay,box);
+      const label=document.createElement('span');label.textContent=String(index+1);const handle=document.createElement('i');handle.className='topology-editor-handle';overlay.append(label,handle);
+      overlay.onpointerdown=event=>{event.preventDefault();overlay.setPointerCapture(event.pointerId);drag={index,mode:event.target.closest('.topology-editor-handle')?'resize':'move',x:event.clientX,y:event.clientY,box:{...boxes[index]}};};
+      overlay.onpointermove=event=>{if(!drag||drag.index!==index)return;const rect=stage.getBoundingClientRect(),dx=(event.clientX-drag.x)/rect.width,dy=(event.clientY-drag.y)/rect.height,next={...boxes[index]};if(drag.mode==='move'){next.x=clamp(drag.box.x+dx,0,1-drag.box.width);next.y=clamp(drag.box.y+dy,0,1-drag.box.height);}else{next.width=clamp(drag.box.width+dx,.03,1-drag.box.x);next.height=clamp(drag.box.height+dy,.03,1-drag.box.y);}boxes[index]=next;place(overlay,next);renderTopologyPreviews();};
+      overlay.onpointerup=overlay.onpointercancel=()=>{drag=null;};
+      overlay.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();const dx=event.key==='ArrowLeft'?-.01:event.key==='ArrowRight'?.01:0,dy=event.key==='ArrowUp'?-.01:event.key==='ArrowDown'?.01:0,next={...boxes[index]};if(event.shiftKey){next.width=clamp(next.width+dx,.03,1-next.x);next.height=clamp(next.height+dy,.03,1-next.y);}else{next.x=clamp(next.x+dx,0,1-next.width);next.y=clamp(next.y+dy,0,1-next.height);}boxes[index]=next;place(overlay,next);renderTopologyPreviews();};
+      boxTarget.appendChild(overlay);
+    });
+    addBox.disabled=boxes.length>=5;removeBox.disabled=boxes.length<=2;renderTopologyPreviews();
+  };
+  addBox.onclick=()=>{if(boxes.length<5){const offset=.04*boxes.length;boxes.push({x:clamp(.3+offset,0,.7),y:clamp(.25+offset,0,.65),width:.25,height:.35});render();}};
+  removeBox.onclick=()=>{if(boxes.length>2){boxes.pop();render();}};
+  image.src=item.preview_url;image.referrerPolicy='no-referrer';image.onload=render;render();
+  const cancelButton=form.querySelector('button[value="cancel"]'),saveButton=form.querySelector('button[value="submit"]');
+  const setSubmitting=value=>{submitting=value;cancelButton.disabled=value;addBox.disabled=value||boxes.length>=5;removeBox.disabled=value||boxes.length<=2;boxTarget.style.pointerEvents=value?'none':'auto';};
+  dialog.oncancel=event=>{if(submitting)event.preventDefault();};
+  form.onsubmit=async event=>{event.preventDefault();if(submitting)return;const note=$('topology-editor-note').value.trim(),fingerprint=JSON.stringify({action,boxes,note});if(fingerprint!==lastFingerprint){lastFingerprint=fingerprint;retryRequestId=crypto.randomUUID();}attempted=true;setSubmitting(true);saved=await submitTopologyAction(item,action,boxes,note,saveButton,retryRequestId,true,ownerId);if(saved&&dialog.dataset.owner===ownerId)dialog.close();else if(dialog.open&&dialog.dataset.owner===ownerId)setSubmitting(false);};
+  dialog.onclose=()=>{if(attempted&&!saved)refillHDReviewQueue(true);};
+  dialog.showModal();
+}
+
+function submitTerminalTopologyAction(item, action, button) {
+  const labels={remove:'Delete this false detection? The original model evidence will remain in history.',inseparable:'Mark these animals as inseparable? This review item will be completed without an identity assignment.'};
+  if(!window.confirm(labels[action]))return;
+  button.dataset.requestId=button.dataset.requestId||crypto.randomUUID();
+  submitTopologyAction(item,action,[],item.workflow_note||String(item.workflow_reason||'').replaceAll('_',' '),button,button.dataset.requestId,false);
 }
 
 async function submitPendingAssignment(item, action, button) {
@@ -1109,8 +1171,8 @@ async function refreshStatus() {
 }
 
 async function postJSON(url, payload) {
-  try { const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); const data=await response.json().catch(()=>({ok:false})); return {...data,transportOK:response.ok}; }
-  catch(_error){ return {ok:false,transportOK:false,networkError:true}; }
+  try { const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); const data=await response.json().catch(()=>({ok:false})); return {...data,transportOK:response.ok,status:response.status}; }
+  catch(_error){ return {ok:false,transportOK:false,networkError:true,status:0}; }
 }
 
 function showError(message) {

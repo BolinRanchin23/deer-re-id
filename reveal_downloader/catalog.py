@@ -315,9 +315,6 @@ class SupabaseCatalog:
     def read_automation_audit(self, limit: int = 120) -> Any:
         return self._rpc("deerid_gate1b_automation_audit", {"p_limit": limit})
 
-    def read_hd_review_queue(self, limit: int = 60) -> Any:
-        return self._rpc("deerid_hd_review_queue", {"p_limit": limit})
-
     def read_hd_review_queue_page(
         self, limit: int, camera_id: Optional[str] = None, queue: str = "active"
     ) -> Any:
@@ -367,6 +364,9 @@ class SupabaseCatalog:
 
     def correct_hd_instance_bbox(self, result_id: int, instance_id: str, expected_event_id: Optional[int], bbox: Mapping[str, Any], reason: str, note: str = "") -> Any:
         return self._rpc("deerid_correct_hd_instance_bbox", {"p_hd_review_result_id": result_id, "p_hd_animal_instance_id": instance_id, "p_expected_geometry_event_id": expected_event_id, "p_bbox_x": bbox["x"], "p_bbox_y": bbox["y"], "p_bbox_width": bbox["width"], "p_bbox_height": bbox["height"], "p_reason": reason, "p_note": note or None})
+
+    def correct_hd_instance_topology(self, result_id: int, instance_id: str, expected_event_id: Optional[int], request_id: str, action: str, boxes: list[Mapping[str, Any]], note: str = "") -> Any:
+        return self._rpc("deerid_correct_hd_instance_topology", {"p_hd_review_result_id": result_id, "p_source_instance_id": instance_id, "p_expected_topology_event_id": expected_event_id, "p_request_id": request_id, "p_action": action, "p_boxes": boxes, "p_note": note or None})
 
     def reassign_hd_instance(self, assignment_event_id: int, profile_id: str) -> Any:
         return self._rpc("deerid_reassign_hd_instance", {"p_assignment_event_id": assignment_event_id, "p_profile_id": profile_id})
@@ -456,6 +456,8 @@ def handle_library(
             "deferred": max(0, int(raw_hd_progress.get("deferred", 0))),
             "pending_confirmation": max(0, int(raw_hd_progress.get("pending_confirmation", 0))),
             "detector_errors": max(0, int(raw_hd_progress.get("detector_errors", 0))),
+            "removed_detections": max(0, int(raw_hd_progress.get("removed_detections", 0))),
+            "inseparable": max(0, int(raw_hd_progress.get("inseparable", 0))),
             "by_camera": {
                 camera_id: max(0, int(count))
                 for camera_id, count in dict(raw_hd_progress.get("by_camera") or {}).items()
@@ -575,7 +577,7 @@ def handle_hd_review_queue(
         has_more = raw["has_more"] or len(raw_items) > limit
         raw_progress = raw.get("progress")
         if not isinstance(raw_progress, Mapping): raise StorageError("HD review queue is unavailable")
-        progress: Dict[str, Any] = {field: max(0, int(raw_progress.get(field, 0))) for field in ("total","completed","remaining","profiling_ready","deferred","pending_confirmation","detector_errors")}
+        progress: Dict[str, Any] = {field: max(0, int(raw_progress.get(field, 0))) for field in ("total","completed","remaining","profiling_ready","deferred","pending_confirmation","detector_errors","removed_detections","inseparable")}
         progress["by_camera"] = {camera: max(0,int(count)) for camera,count in dict(raw_progress.get("by_camera") or {}).items() if isinstance(camera,str) and _UUID.fullmatch(camera)}
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
         logging.exception("DeerID HD review queue assembly failed")
@@ -585,7 +587,7 @@ def handle_hd_review_queue(
 
 def _mutation_error_response(exc: Exception, unavailable: str) -> Tuple[int, Dict[str, Any]]:
     message = str(exc).lower()
-    if any(marker in message for marker in ("stale", "conflict", "already resolved", "not pending", "pending assignment")):
+    if any(marker in message for marker in ("stale", "conflict", "already resolved", "already assigned", "not pending", "pending assignment", "terminal", "too many animal instances")):
         return 409, {"ok": False, "error": "conflicting workflow state"}
     if "invalid" in message or "not found" in message:
         return 400, {"ok": False, "error": "invalid workflow action"}
@@ -702,6 +704,53 @@ def handle_hd_geometry_correction(
         logging.exception("DeerID geometry correction failed")
         return _mutation_error_response(exc, "geometry correction unavailable")
     return 200, {field: result[field] for field in ("ok","geometry_event_id","hd_animal_instance_id","bbox") if field in result}
+
+
+def handle_hd_instance_topology(
+    environ: Mapping[str, str], token: str, instance_id: str,
+    expected_event_id: Optional[int], request_id: str, action: str, boxes: Any, *,
+    note: str = "", catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Apply one idempotent append-only animal-instance topology correction."""
+    signing_key = _signing_key(environ); current = int(time.time()) if epoch_now is None else int(epoch_now)
+    capability = _verify_hd_instance_action_token(token, signing_key, current) if signing_key is not None else None
+    if capability is None or not isinstance(instance_id, str) or capability[1] != instance_id:
+        return 404, {"ok": False, "error": "not found"}
+    if (
+        not isinstance(request_id, str) or _UUID.fullmatch(request_id) is None
+        or not isinstance(action, str) or action not in {"add", "split", "remove", "inseparable"}
+        or (expected_event_id is not None and (not isinstance(expected_event_id, int) or isinstance(expected_event_id, bool) or expected_event_id < 1))
+        or not isinstance(note, str) or len(note) > 500 or not isinstance(boxes, list)
+    ):
+        return 400, {"ok": False, "error": "invalid topology correction"}
+    try:
+        if uuid.UUID(request_id).version != 4:
+            return 400, {"ok": False, "error": "invalid topology correction"}
+    except ValueError:
+        return 400, {"ok": False, "error": "invalid topology correction"}
+    expected_count = 1 if action == "add" else None
+    if (expected_count is not None and len(boxes) != expected_count) or (action == "split" and not 2 <= len(boxes) <= 5) or (action in {"remove", "inseparable"} and boxes):
+        return 400, {"ok": False, "error": "invalid topology correction"}
+    try:
+        if any(not isinstance(box, Mapping) or set(box) != {"x", "y", "width", "height"} for box in boxes):
+            raise StorageError("invalid topology box")
+        safe_boxes = [_sanitize_bbox(box) for box in boxes]
+        if any(box["x"] + box["width"] > 1 or box["y"] + box["height"] > 1 for box in safe_boxes):
+            raise StorageError("invalid topology box")
+    except (AttributeError, TypeError, ValueError, StorageError):
+        return 400, {"ok": False, "error": "invalid topology correction"}
+    url = environ.get("SUPABASE_URL", ""); secret = environ.get("SUPABASE_SECRET_KEY", "")
+    if not url or not secret: return 404, {"ok": False, "error": "not found"}
+    try:
+        catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")); clock = time.monotonic; catalog.set_deadline(clock() + INTERACTIVE_DEADLINE_SECONDS, clock=clock)
+        result = catalog.correct_hd_instance_topology(capability[0], instance_id, expected_event_id, request_id, action, safe_boxes, note.strip())
+        ids = result.get("resulting_instance_ids") if isinstance(result, Mapping) else None
+        if not isinstance(result, Mapping) or result.get("ok") is not True or result.get("action") != action or result.get("source_instance_id") != instance_id or not isinstance(result.get("topology_event_id"), int) or isinstance(result.get("topology_event_id"), bool) or result["topology_event_id"] < 1 or not isinstance(ids, list) or len(ids) > 5 or len(set(ids)) != len(ids) or any(not isinstance(value, str) or _UUID.fullmatch(value) is None for value in ids) or (action == "add" and len(ids) != 1) or (action == "split" and not 2 <= len(ids) <= 5) or (action in {"remove", "inseparable"} and ids) or not isinstance(result.get("replayed"), bool): raise StorageError("Topology correction failed")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError) as exc:
+        logging.exception("DeerID topology correction failed")
+        return _mutation_error_response(exc, "topology correction unavailable")
+    return 200, {field: result[field] for field in ("ok","action","topology_event_id","source_instance_id","resulting_instance_ids","replayed") if field in result}
 
 
 def handle_library_preview(
@@ -1246,15 +1295,21 @@ def _sanitize_hd_review_queue_page(value: Any, key: bytes, now: int, limit: int)
             "hd_review_result_id": result_id, "hd_animal_instance_id": instance_id, "media_id": media_id, "media_asset_id": asset_id,
             "instance_index": int(raw.get("instance_index") or 0), "instance_count": int(raw.get("instance_count") or 0),
             "bbox": _sanitize_bbox(raw.get("bbox") or {}), "original_bbox": _sanitize_bbox(raw.get("original_bbox") or raw.get("bbox") or {}),
-            "geometry_event_id": raw.get("geometry_event_id"), "geometry_history": geometry_history, "detection_complete": raw.get("detection_complete") is True,
+            "geometry_event_id": raw.get("geometry_event_id"), "geometry_history": geometry_history, "review_origin": raw.get("review_origin") or "model_detection", "analysis_status": raw.get("analysis_status") or "complete", "split_from_instance_id": raw.get("split_from_instance_id"), "detection_complete": raw.get("detection_complete") is True,
             "detection_notes": str(raw.get("detection_notes") or "")[:500], "model_name": str(raw.get("model_name") or "")[:120], "model_version": str(raw.get("model_version") or "")[:160],
             "result": clean_analysis, "created_at": created_at, "captured_at": captured_at, "camera_id": camera_id, "camera_name": str(raw.get("camera_name") or "")[:100],
-            "workflow_state": raw.get("workflow_state"), "workflow_reason": raw.get("workflow_reason"), "workflow_note": raw.get("workflow_note"), "proposal_state": raw.get("proposal_state"), "proposal_action": raw.get("proposal_action"), "proposed_profile_id": raw.get("proposed_profile_id"),
+            "workflow_state": raw.get("workflow_state"), "workflow_reason": raw.get("workflow_reason"), "workflow_note": raw.get("workflow_note"), "topology_event_id": raw.get("topology_event_id"), "proposal_state": raw.get("proposal_state"), "proposal_action": raw.get("proposal_action"), "proposed_profile_id": raw.get("proposed_profile_id"),
             "proposed_display_name": raw.get("proposed_display_name"), "proposal_id": raw.get("proposal_id"), "proposal_event_id": raw.get("proposal_event_id"),
         }
         if safe["instance_index"] < 1 or safe["instance_count"] < safe["instance_index"]:
             raise StorageError("HD review queue is unavailable")
         if safe["geometry_event_id"] is not None and (not isinstance(safe["geometry_event_id"], int) or isinstance(safe["geometry_event_id"], bool) or safe["geometry_event_id"] < 1):
+            raise StorageError("HD review queue is unavailable")
+        if safe["review_origin"] not in {"model_detection", "human_topology_correction"}:
+            raise StorageError("HD review queue is unavailable")
+        if safe["analysis_status"] not in {"complete", "not_run", "stale_geometry"} or (safe["split_from_instance_id"] is not None and (not isinstance(safe["split_from_instance_id"], str) or _UUID.fullmatch(safe["split_from_instance_id"]) is None)):
+            raise StorageError("HD review queue is unavailable")
+        if safe["topology_event_id"] is not None and (not isinstance(safe["topology_event_id"], int) or isinstance(safe["topology_event_id"], bool) or safe["topology_event_id"] < 1):
             raise StorageError("HD review queue is unavailable")
         if safe["workflow_state"] not in {None,"active","reopen","defer","detector_error"} or safe["proposal_state"] not in {None,"pending","confirmed","undone"} or safe["proposal_action"] not in {None,"create_profile","match_profile"}:
             raise StorageError("HD review queue is unavailable")

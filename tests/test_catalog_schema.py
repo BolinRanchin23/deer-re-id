@@ -112,6 +112,37 @@ class CatalogSchemaTests(unittest.TestCase):
         gallery = sql.split("create or replace function public.deerid_profile_gallery_page", 1)[1]
         self.assertIn("and i.id is not null", gallery)
 
+    def test_topology_corrections_are_append_only_idempotent_and_queue_aware(self):
+        migration = Path("supabase/migrations/20260828150500_hd_instance_topology_corrections.sql")
+        self.assertTrue(migration.exists())
+        sql = migration.read_text(encoding="utf-8").lower()
+        self.assertIn("create table deerid.hd_instance_topology_events", sql)
+        self.assertIn("request_id uuid not null unique", sql)
+        self.assertIn("supersedes_event_id", sql)
+        self.assertIn("resulting_instance_ids", sql)
+        self.assertIn("deerid_correct_hd_instance_topology", sql)
+        for action in ("'add'", "'split'", "'remove'", "'inseparable'"):
+            self.assertIn(action, sql)
+        self.assertIn("for update", sql)
+        self.assertIn("row_number() over", sql)
+        self.assertIn("count(*) over", sql)
+        self.assertIn("topology_action not in ('split','remove','inseparable')", sql)
+        self.assertIn("deerid_hd_review_queue_page", sql)
+        self.assertIn("deerid_hd_review_progress", sql)
+        self.assertIn("human_topology_correction", sql)
+        self.assertIn("origin_kind", sql)
+        self.assertIn("analysis_status", sql)
+        self.assertIn("split_from_hd_animal_instance_id", sql)
+        self.assertIn("pg_advisory_xact_lock", sql)
+        self.assertIn("existing.supersedes_event_id is distinct from p_expected_topology_event_id", sql)
+        self.assertIn("duplicate topology box", sql)
+        self.assertIn("lock_hd_review_result_media_asset", sql)
+        self.assertIn("hd_review_results_media_asset_lock", sql)
+        self.assertIn("revoke all on function public.deerid_hd_review_queue(integer) from service_role", sql)
+        self.assertIn("reject_terminal_topology_mutation", sql)
+        for table in ("hd_review_decisions", "hd_profile_assignment_proposals", "hd_instance_geometry_events", "hd_instance_review_events"):
+            self.assertIn(f"on deerid.{table}", sql)
+
     def test_profile_assignments_enter_an_append_only_confirmation_buffer(self):
         sql = Path("supabase/migrations/20260828023500_profiling_review_loop.sql").read_text().lower()
         self.assertIn("create table deerid.hd_profile_assignment_proposals", sql)

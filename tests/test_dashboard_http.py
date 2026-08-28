@@ -290,6 +290,25 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertIn("/api/hd_geometry_correction", app_js)
         self.assertIn("geometry_event_id", app_js)
 
+    def test_detector_issue_remediation_supports_add_split_remove_and_inseparable(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        for label in ("Add missed deer", "Split merged detection", "Delete false detection", "Mark inseparable"):
+            self.assertIn(label, app_js)
+        self.assertIn("topology-editor-dialog", html)
+        self.assertIn("topology-editor-stage", html)
+        self.assertIn("topology-editor-preview", html)
+        self.assertIn("/api/hd_instance_topology", app_js)
+        self.assertIn("crypto.randomUUID()", app_js)
+        self.assertIn("topology_event_id", app_js)
+        self.assertIn("review_origin", app_js)
+        self.assertIn("Human-created review crop", app_js)
+        self.assertIn("ArrowLeft", app_js)
+        self.assertIn("dialog.dataset.owner", app_js)
+        self.assertIn("cancelButton.disabled", app_js)
+        self.assertIn("dialog.oncancel", app_js)
+        self.assertIn("ownerId&&dialog.dataset.owner===ownerId", "".join(app_js.split()))
+
     def test_returned_hd_review_is_scoped_to_one_animal_instance(self):
         html = Path("public/index.html").read_text(encoding="utf-8")
         app_js = Path("public/app.js").read_text(encoding="utf-8")

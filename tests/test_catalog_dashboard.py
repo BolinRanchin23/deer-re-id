@@ -330,7 +330,7 @@ class PrivateLibraryTests(unittest.TestCase):
             def read_hd_review_queue_page(self, limit, camera_id=None, queue="active"):
                 type(self).queue_args = (limit, camera_id, queue)
                 item = dict(self.read_hd_review_queue(limit)[0])
-                item.update({"hd_animal_instance_id":"77777777-7777-4777-8777-777777777777","instance_index":1,"instance_count":1,"bbox":{"x":.1,"y":.2,"width":.4,"height":.5},"detection_complete":True,"detection_notes":"one deer","workflow_state":"detector_error","workflow_reason":"box_clipped","workflow_note":"left antler clipped"})
+                item.update({"hd_animal_instance_id":"77777777-7777-4777-8777-777777777777","instance_index":1,"instance_count":1,"bbox":{"x":.1,"y":.2,"width":.4,"height":.5},"detection_complete":True,"detection_notes":"one deer","workflow_state":"detector_error","workflow_reason":"box_clipped","workflow_note":"left antler clipped","topology_event_id":12})
                 return {"items": [item], "has_more": False, "progress": {"total":1,"completed":0,"remaining":1,"profiling_ready":1,"deferred":0,"pending_confirmation":0,"detector_errors":0,"by_camera":{}}}
 
         camera_id = "43611205-321c-4bd6-816d-1e92caaef1f4"
@@ -348,6 +348,7 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(QueueCatalog.queue_args, (6, camera_id, "issues"))
         self.assertEqual(payload["items"][0]["workflow_reason"], "box_clipped")
         self.assertEqual(payload["items"][0]["workflow_note"], "left antler clipped")
+        self.assertEqual(payload["items"][0]["topology_event_id"], 12)
 
     def test_hd_workflow_actions_are_durable_and_instance_scoped(self):
         raw_handler = getattr(catalog_module, "handle_hd_review_workflow", None)
@@ -454,6 +455,32 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
         self.assertEqual(GeometryCatalog.corrected, (4, instance_id, None, bbox, "rebox", ""))
+
+    def test_topology_correction_is_instance_bound_idempotent_and_allowlisted(self):
+        raw_handler = getattr(catalog_module, "handle_hd_instance_topology", None)
+        if not callable(raw_handler):
+            self.fail("handle_hd_instance_topology is missing")
+        handler = cast(Callable[..., tuple[int, dict[str, Any]]], raw_handler)
+
+        class TopologyCatalog(MemoryCatalog):
+            corrected = None
+
+            def correct_hd_instance_topology(self, result_id, instance_id, expected_event_id, request_id, action, boxes, note=""):
+                type(self).corrected = (result_id, instance_id, expected_event_id, request_id, action, boxes, note)
+                return {"ok": True, "action": action, "topology_event_id": 19, "source_instance_id": instance_id, "resulting_instance_ids": ["99999999-9999-4999-8999-999999999999"], "replayed": False, "internal_snapshot": "must-not-leak"}
+
+        instance_id = "77777777-7777-4777-8777-777777777777"
+        request_id = "88888888-8888-4888-8888-888888888888"
+        token = _sign_hd_instance_action_token(4, instance_id, 1_786_200_100, b"preview-signing-secret-at-least-16")
+        catalog = TopologyCatalog()
+        box = {"x": .1, "y": .2, "width": .3, "height": .4}
+        status, payload = handler(self.environment(), token, instance_id, None, request_id, "add", [box], note="missed deer", catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["topology_event_id"], 19)
+        self.assertNotIn("internal_snapshot", payload)
+        self.assertEqual(TopologyCatalog.corrected, (4, instance_id, None, request_id, "add", [box], "missed deer"))
+        sibling_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        self.assertEqual(handler(self.environment(), token, sibling_id, None, request_id, "add", [box], catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000)[0], 404)
 
     def test_library_deadline_accommodates_full_operational_dashboard(self):
         self.assertGreaterEqual(LIBRARY_DEADLINE_SECONDS, 20)
