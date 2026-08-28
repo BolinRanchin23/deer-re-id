@@ -28,6 +28,8 @@ with latest_prediction as (
   select distinct on (p.media_id)
     p.media_id,p.species_label,p.visible_antler,p.probable_male,p.triage_class
   from deerid.gate1b_predictions p
+  where p.model_name='OpenAI-GPT-4o-mini-Vision'
+    and p.model_version='gpt-4o-mini-2024-07-18@prompt-2026-08-12.1'
   order by p.media_id,p.created_at desc,p.id desc
 ), base as (
   select m.id,m.captured_at,m.camera_id,c.name camera_name,m.variant,

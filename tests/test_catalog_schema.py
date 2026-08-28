@@ -24,6 +24,8 @@ class CatalogSchemaTests(unittest.TestCase):
         self.assertIn("using p_limit", sql)
         self.assertIn("security definer", sql)
         self.assertIn("set search_path=pg_catalog,public,deerid,pg_temp", sql)
+        self.assertIn("p.model_name='openai-gpt-4o-mini-vision'", sql)
+        self.assertIn("p.model_version='gpt-4o-mini-2024-07-18@prompt-2026-08-12.1'", sql)
 
     def test_profile_gallery_page_is_profile_scoped_and_hard_bounded(self):
         sql = Path("supabase/migrations/20260817190000_bounded_profile_gallery_page.sql").read_text().lower()
