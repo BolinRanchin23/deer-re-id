@@ -447,9 +447,6 @@ def handle_library(
         process_overview = _sanitize_process_overview(catalog.read_process_overview())
         pipeline_health = _sanitize_pipeline_health(catalog.read_pipeline_health())
         automation_audit = _sanitize_auxiliary_media_rows(catalog.read_automation_audit(20), signing_key, current, "automation_event_id")
-        # Keep the workspace bootstrap below the bounded PostgREST transport limit.
-        # Profiling owns subsequent queue slices; All Photos owns archive paging.
-        hd_review_queue = _sanitize_hd_review_queue_page(catalog.read_hd_review_queue(5), signing_key, current, 5)
         raw_hd_progress = catalog.read_hd_review_progress()
         hd_review_progress = {
             "total": max(0, int(raw_hd_progress.get("total", 0))),
@@ -479,7 +476,7 @@ def handle_library(
         "process_overview": process_overview,
         "pipeline_health": pipeline_health,
         "automation_audit": automation_audit,
-        "hd_review_queue": hd_review_queue,
+        "hd_review_queue": [],
         "hd_review_progress": hd_review_progress,
     }
     mapbox_token = environ.get("NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN", "").strip()

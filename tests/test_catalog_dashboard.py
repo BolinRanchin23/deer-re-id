@@ -467,10 +467,11 @@ class PrivateLibraryTests(unittest.TestCase):
         with self.assertRaises(Exception):
             _sanitize_process_overview(broken)
 
-    def test_library_bounds_hd_review_bootstrap_to_transport_safe_slice(self):
+    def test_library_does_not_bootstrap_from_the_legacy_hd_queue(self):
         source=Path("reveal_downloader/catalog.py").read_text()
-        self.assertIn("catalog.read_hd_review_queue(5)",source)
-        self.assertNotIn("catalog.read_hd_review_queue(10)",source)
+        library=source.split("def handle_library",1)[1].split("def handle_profile_gallery",1)[0]
+        self.assertNotIn("catalog.read_hd_review_queue",library)
+        self.assertIn('"hd_review_queue": []',library)
 
     def test_all_photos_default_page_allows_thirty_signed_rows(self):
         catalog = MemoryCatalog()
@@ -602,16 +603,8 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(payload["pipeline_health"]["overall"], "healthy")
         self.assertEqual(len(payload["pipeline_health"]["stages"]), 7)
         self.assertEqual(payload["automation_audit"][0]["action"], "auto_suppress_female")
-        self.assertEqual(payload["hd_review_queue"][0]["result"]["identity_eligible"], True)
+        self.assertEqual(payload["hd_review_queue"], [])
         self.assertRegex(payload["automation_audit"][0]["preview_url"], r"^/api/library_preview\?token=")
-        self.assertRegex(payload["hd_review_queue"][0]["preview_url"], r"^/api/library_preview\?token=asset\.")
-        asset_token = payload["hd_review_queue"][0]["preview_url"].split("token=", 1)[1]
-        preview_status, _, preview_body = handle_library_preview(
-            self.environment(), asset_token, catalog_factory=lambda *_: catalog, epoch_now=1_786_200_000
-        )
-        self.assertEqual(preview_status, 200)
-        self.assertEqual(preview_body, b"\xff\xd8private\xff\xd9")
-        self.assertEqual(catalog.resolved_asset, "66666666-6666-4666-8666-666666666666")
         self.assertTrue(catalog.operational_stats)
         serialized = str(payload)
         self.assertNotIn("must-not-leak.jpg", serialized)
