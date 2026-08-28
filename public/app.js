@@ -9,12 +9,18 @@ let pipeline = {};
 let gate1bMetrics = {};
 let operationalStats = {};
 let processOverview = {};
+let pipelineHealth = {};
 let allPhotosCursor = null;
 let photosRequestController = null;
 let photoFilterTimer = null;
 let automationAudit = [];
 let hdReviewQueue = [];
 let hdReviewProgress = {total: 0, completed: 0, remaining: 0};
+let hdReviewRefillInFlight = false;
+let activeHDReviewQueue = 'active';
+let hdReviewRefillGeneration = 0;
+let hdReviewRefillController = null;
+const pendingHDReviewIds = new Set();
 let profileGallery = [];
 let activeProfileId = null;
 let profileGalleryRequestGeneration = 0;
@@ -125,7 +131,7 @@ async function submitReview(item, action, card) {
 function setHealth(value) {
   const known = ['healthy', 'degraded', 'error'];
   const health = known.includes(value) ? value : 'unknown';
-  $('nav-status').textContent = health === 'healthy' ? 'Archive healthy' : health === 'unknown' ? 'No completed runs' : 'Attention required';
+  $('nav-status').textContent = health === 'healthy' ? 'Pipeline healthy' : health === 'unknown' ? 'Pipeline telemetry incomplete' : 'Pipeline attention required';
   $('nav-dot').className = 'pulse ' + health;
 }
 
@@ -506,6 +512,12 @@ function renderPipeline() {
   $('pipeline-model').textContent = `${model} ${version} · one representative per five-second camera event`;
 }
 
+function renderPipelineHealth() {
+  const target=$('pipeline-health-body');if(!target)return;target.replaceChildren();
+  const labels={ingestion:'Ingestion',gate1:'Gate 1',gate1b:'Gate 1B',hd_requests:'HD requests',hd_returns:'HD returns',hd_analysis:'HD analysis',profiling:'Profiling'};
+  Object.entries(labels).forEach(([key,label])=>{const stage=(pipelineHealth.stages||{})[key]||{};const row=document.createElement('tr');const values=[label,stage.last_success_at?formatDate(stage.last_success_at):'—',stage.pending_count??'—',stage.oldest_pending_at?formatDate(stage.oldest_pending_at):'—',stage.stale_claim_count??'—',stage.failure_count_24h??'—'];values.forEach(value=>{const cell=document.createElement('td');cell.textContent=String(value);row.appendChild(cell);});if(stage.telemetry_complete===false){const note=document.createElement('span');note.className='chip';note.textContent='Telemetry incomplete';row.firstChild.append(' ',note);}target.appendChild(row);});
+}
+
 function collectProfiles() {
   const profiles = new Map();
   deerProfiles.forEach(profile => profiles.set(String(profile.id), {
@@ -514,7 +526,7 @@ function collectProfiles() {
     seasonYear: profile.season_year,
     photoCount: n(profile.photo_count),
     representativeCrop: profile.representative_crop && typeof profile.representative_crop === 'object' ? profile.representative_crop : null,
-    previewUrls: Array.isArray(profile.preview_urls) ? profile.preview_urls.slice(0, 1) : [],
+    profileCrops: Array.isArray(profile.profile_crops) ? profile.profile_crops.slice(0, 5) : [],
     cameraIds: Array.isArray(profile.camera_ids) ? profile.camera_ids : [], cameraNames: profile.camera_names || [], first_seen: profile.first_seen, last_seen: profile.last_seen, species: profile.species, sex: profile.sex,
     photos: []
   }));
@@ -565,14 +577,22 @@ async function setRepresentative(item, button) {
 }
 
 function openProfilePicker(item, purpose) {
-  const dialog=$('profile-picker-dialog'), list=$('profile-picker-list'), search=$('profile-picker-search'); list.replaceChildren();
+  const dialog=$('profile-picker-dialog'), list=$('profile-picker-list'), search=$('profile-picker-search'), queryTarget=$('profile-compare-query'); list.replaceChildren(); queryTarget.replaceChildren();
+  $('profile-picker-title').textContent=purpose==='reassign'?'Compare and reassign deer':'Compare with existing deer';
+  queryTarget.appendChild(makeInstanceCrop(item,'profile-compare-query-crop'));
   const eligible=collectProfiles().filter(profile=>Number(profile.seasonYear)===new Date(item.captured_at).getFullYear()&&(purpose!=='reassign'||String(profile.id)!==String(item.profile_id)));
   const choose=(profile,button)=>{dialog.close();if(purpose==='reassign')submitProfileReassignment(item,profile.id,button);else submitHDReviewDecision(item,{action:'match_profile',profile_id:profile.id},button);};
   const renderGroup=(label,profiles)=>{
     if(!profiles.length)return;
     const section=document.createElement('section');section.className='profile-picker-section';
     const heading=document.createElement('h3');heading.textContent=label;section.appendChild(heading);
-    profiles.forEach(profile=>{const button=document.createElement('button');button.type='button';button.className='profile-picker-option';button.textContent=`${profile.name} · ${profile.photoCount} confirmed photo${profile.photoCount===1?'':'s'}`;button.onclick=()=>choose(profile,button);section.appendChild(button);});
+    profiles.forEach(profile=>{
+      const button=document.createElement('button');button.type='button';button.className='profile-picker-option profile-compare-card';
+      const images=document.createElement('div');images.className='profile-compare-images';
+      (profile.profileCrops||[]).slice(0,3).forEach(crop=>images.appendChild(makeInstanceCrop(crop,'profile-compare-crop')));
+      const copy=document.createElement('span');copy.textContent=`${profile.name} · ${profile.photoCount} confirmed photo${profile.photoCount===1?'':'s'}`;
+      button.append(images,copy);button.onclick=()=>choose(profile,button);section.appendChild(button);
+    });
     list.appendChild(section);
   };
   const render=()=>{
@@ -597,8 +617,7 @@ function renderProfileGalleryItems(profileId) {
   const target = $('profile-gallery-grid'); target.replaceChildren();
   profileGallery.filter(item => String(item.profile_id) === String(profileId)).forEach(item => {
     const card = document.createElement('article'); card.className = 'card profile-gallery-card';
-    if (item.hd_animal_instance_id) card.appendChild(makeInstanceCrop(item, 'profile-gallery-crop'));
-    else { const image=document.createElement('img'); image.src=item.preview_url; image.alt='Confirmed deer photo'; card.appendChild(image); }
+    card.appendChild(makeInstanceCrop(item, 'profile-gallery-crop'));
     const menuButton=document.createElement('button'); menuButton.className='gallery-menu-button'; menuButton.type='button'; menuButton.setAttribute('aria-label','Photo actions'); menuButton.textContent='⋯';
     const menu=document.createElement('div'); menu.className='profile-gallery-controls'; menu.hidden=true;
     const representative=document.createElement('button'); representative.textContent='Set as representative'; representative.disabled=!item.representative_token; representative.onclick=()=>setRepresentative(item,representative);
@@ -660,23 +679,11 @@ function renderDeerProfiles() {
     card.setAttribute('role', 'button');
     card.addEventListener('click', () => openProfileGallery(profile.id));
     card.addEventListener('keydown', event => { if (event.key === 'Enter') openProfileGallery(profile.id); });
-    const previewUrls = (profile.previewUrls || []).slice(0, 1);
-    if (profile.representativeCrop) {
+    const profileCrops = (profile.profileCrops || []).slice(0, 1);
+    if (profileCrops.length) {
       const strip = document.createElement('div');
       strip.className = 'profile-thumbnail-strip representative-photo';
-      strip.appendChild(makeInstanceCrop(profile.representativeCrop, 'profile-representative-crop'));
-      card.appendChild(strip);
-    } else if (previewUrls.length) {
-      const strip = document.createElement('div');
-      strip.className = 'profile-thumbnail-strip representative-photo';
-      previewUrls.forEach((url, index) => {
-        const image = document.createElement('img');
-        image.src = url;
-        image.alt = `${profile.name} confirmed photo ${index + 1}`;
-        image.loading = 'lazy';
-        image.referrerPolicy = 'no-referrer';
-        strip.appendChild(image);
-      });
+      strip.appendChild(makeInstanceCrop(profileCrops[0], 'profile-representative-crop'));
       card.appendChild(strip);
     }
     const meta = document.createElement('div');
@@ -715,6 +722,44 @@ function preloadHDReviewQueue(count) {
   hdReviewQueue.slice(1, count + 1).forEach(item => { const image = new Image(); image.src = item.preview_url; });
 }
 
+async function refillHDReviewQueue(force = false) {
+  if (hdReviewRefillInFlight && !force) return;
+  if (force && hdReviewRefillController) hdReviewRefillController.abort();
+  hdReviewRefillInFlight = true;
+  if (force) { hdReviewQueue=[]; if(activeView==='hdreview')renderHDReview(); }
+  const requestGeneration = ++hdReviewRefillGeneration;
+  hdReviewRefillController = new AbortController();
+  const cameraId = $('hd-location-filter').value;
+  const params = new URLSearchParams({limit: '15', queue: activeHDReviewQueue});
+  if (cameraId) params.set('camera_id', cameraId);
+  try {
+    const response = await fetch('/api/hd_review_queue?' + params, {cache: 'no-store',signal:hdReviewRefillController.signal});
+    const data = await response.json().catch(() => ({ok: false}));
+    if (!response.ok || !data.ok || !Array.isArray(data.items)) throw new Error('Profiling queue is unavailable.');
+    if (requestGeneration !== hdReviewRefillGeneration) return;
+
+    data.items.forEach(item => {
+      if (!pendingHDReviewIds.has(item.hd_animal_instance_id) && !hdReviewQueue.some(candidate => candidate.hd_animal_instance_id === item.hd_animal_instance_id)) hdReviewQueue.push(item);
+    });
+    if(data.progress&&typeof data.progress==='object')hdReviewProgress=data.progress;
+    if (activeView === 'hdreview') renderHDReview();
+  } catch (error) {
+    if(error.name!=='AbortError')showError(error.message || 'Profiling queue is unavailable.');
+  } finally {
+    if(requestGeneration===hdReviewRefillGeneration){hdReviewRefillInFlight=false;hdReviewRefillController=null;}
+  }
+}
+
+function makePendingAssignmentComparison(item) {
+  const comparison=document.createElement('section');comparison.className='pending-assignment-comparison';
+  const heading=document.createElement('h3');
+  const profile=collectProfiles().find(candidate=>String(candidate.id)===String(item.proposed_profile_id));
+  heading.textContent=item.proposal_action==='create_profile'?`Proposed new deer: ${item.proposed_display_name||'Unnamed deer'}`:`Proposed match: ${profile?.name||'Existing deer'}`;
+  comparison.appendChild(heading);
+  if(profile){const images=document.createElement('div');images.className='profile-compare-images';(profile.profileCrops||[]).slice(0,3).forEach(crop=>images.appendChild(makeInstanceCrop(crop,'profile-compare-crop')));comparison.appendChild(images);}
+  return comparison;
+}
+
 function renderHDReview(animate = false) {
   const target = $('hd-review-stage');
   if (!target) return;
@@ -723,13 +768,17 @@ function renderHDReview(animate = false) {
   const remaining = n(hdReviewProgress.remaining);
   const completed = Math.min(total, n(hdReviewProgress.completed));
   const percent = total ? Math.round(100 * completed / total) : 100;
+  $('hd-ready-count').textContent=n(hdReviewProgress.profiling_ready);
+  $('hd-deferred-count').textContent=n(hdReviewProgress.deferred);
+  $('hd-pending-count').textContent=n(hdReviewProgress.pending_confirmation);
+  $('hd-issues-count').textContent=n(hdReviewProgress.detector_errors);
   $('hd-review-progress-bar').style.width = `${percent}%`;
   $('hd-review-progress-bar').setAttribute('aria-valuenow', String(percent));
   const locationId = $('hd-location-filter').value;
   const locationQueue = hdReviewQueue.filter(candidate => !locationId || candidate.camera_id === locationId);
   const byCamera = hdReviewProgress.by_camera && typeof hdReviewProgress.by_camera === 'object' ? hdReviewProgress.by_camera : {};
   const locationRemaining = locationId ? n(byCamera[locationId]) : remaining;
-  $('hd-review-progress-copy').textContent = `${locationRemaining} animals remaining`;
+  $('hd-review-progress-copy').textContent = locationId ? `${locationRemaining} unresolved animals at this location · queue-tab counts include all locations` : `${locationRemaining} animals remaining across all locations`;
   const item = locationQueue[0];
   if (item) {
     const result = item.result || {};
@@ -801,35 +850,116 @@ function renderHDReview(animate = false) {
     modelAnalysis.append(description,facts,detectionSection);
     modelDetails.append(modelSummary,modelAnalysis);
 
-    const decisionPrompt = document.createElement('p'); decisionPrompt.className='hd-decision-prompt'; decisionPrompt.textContent='What should happen with this deer?';
+    const decisionPrompt = document.createElement('p'); decisionPrompt.className='hd-decision-prompt'; decisionPrompt.textContent=activeHDReviewQueue==='pending'?'Review this proposed assignment':'What should happen with this deer?';
     const controls = document.createElement('div'); controls.className='hd-primary-actions';
-    const create=document.createElement('button'); create.type='button'; create.textContent='Create new deer'; create.onclick=()=>openCreateProfile(item,result,create);
-    const match=document.createElement('button'); match.type='button'; match.textContent='Match existing deer'; match.onclick=()=>openProfilePicker(item,'match');
-    const skip=document.createElement('button'); skip.type='button'; skip.textContent='Not identifiable'; skip.onclick=()=>submitHDReviewDecision(item,{action:'not_identity_worthy'},skip);
-    controls.append(create,match,skip);
-    meta.append(instance, heading, decisionPrompt, controls, modelDetails);
+    if (activeHDReviewQueue === 'pending') {
+      const confirm=document.createElement('button'); confirm.type='button'; confirm.textContent='Confirm assignment'; confirm.onclick=()=>submitPendingAssignment(item,'confirm',confirm);
+      const undo=document.createElement('button'); undo.type='button'; undo.textContent='Undo and return to profiling'; undo.onclick=()=>submitPendingAssignment(item,'undo',undo);
+      controls.append(confirm,undo);
+    } else if (activeHDReviewQueue === 'issues') {
+      const issueDetails=document.createElement('p');issueDetails.className='hd-detection-warning';issueDetails.textContent=`Reported issue: ${String(item.workflow_reason||'other').replaceAll('_',' ')}${item.workflow_note?` · ${item.workflow_note}`:''}`;
+      meta.append(instance,heading,issueDetails,decisionPrompt);
+      const fixBox=document.createElement('button'); fixBox.type='button'; fixBox.textContent='Fix crop box'; fixBox.onclick=()=>openBBoxEditor(item);
+      const reopen=document.createElement('button'); reopen.type='button'; reopen.textContent='Return to active review'; reopen.onclick=()=>submitHDWorkflowAction(item,'reopen',reopen); controls.append(fixBox,reopen);
+    } else if (activeHDReviewQueue === 'deferred') {
+      const reopen=document.createElement('button'); reopen.type='button'; reopen.textContent='Return to active review'; reopen.onclick=()=>submitHDWorkflowAction(item,'reopen',reopen); controls.append(reopen);
+    } else {
+      const create=document.createElement('button'); create.type='button'; create.textContent='Create new deer'; create.onclick=()=>openCreateProfile(item,result,create);
+      const match=document.createElement('button'); match.type='button'; match.textContent='Match existing deer'; match.onclick=()=>openProfilePicker(item,'match');
+      const skip=document.createElement('button'); skip.type='button'; skip.textContent='Not identifiable'; skip.onclick=()=>submitHDReviewDecision(item,{action:'not_identity_worthy'},skip);
+      const defer=document.createElement('button'); defer.type='button'; defer.textContent='Decide later'; defer.onclick=()=>submitHDWorkflowAction(item,'defer',defer);
+      const issue=document.createElement('button'); issue.type='button'; issue.textContent='Report crop / detection issue'; issue.onclick=()=>openDetectorErrorDialog(item);
+      const fixBox=document.createElement('button'); fixBox.type='button'; fixBox.textContent='Fix crop box'; fixBox.onclick=()=>openBBoxEditor(item);
+      controls.append(create,match,skip,defer,issue,fixBox);
+    }
+    if(activeHDReviewQueue==='pending')meta.append(instance,heading,makePendingAssignmentComparison(item),decisionPrompt,controls,modelDetails);
+    else if(activeHDReviewQueue==='issues')meta.append(controls,modelDetails);
+    else meta.append(instance, heading, decisionPrompt, controls, modelDetails);
     card.append(visual, meta);
     if (animate) card.classList.add('review-enter-right');
     target.appendChild(card);
     preloadHDReviewQueue(5);
   }
   if (!locationQueue.length) {
-    const empty = document.createElement('div'); empty.className = 'card empty'; empty.textContent = 'No returned HD animal instances awaiting profile review.'; target.appendChild(empty);
+    const empty = document.createElement('div'); empty.className = 'card empty'; empty.textContent = hdReviewRefillInFlight ? 'Loading profiling queue…' : 'No returned HD animal instances in this queue.'; target.appendChild(empty);
   }
 }
 
+function restoreHDReviewItem(item, priorIndex, originQueue, originCamera) {
+  if(activeHDReviewQueue===originQueue&&$('hd-location-filter').value===originCamera){hdReviewQueue.splice(Math.max(0,priorIndex),0,item);renderHDReview();}
+  else refillHDReviewQueue(true);
+}
+
 async function submitHDReviewDecision(item, payload, button) {
+  if (pendingHDReviewIds.has(item.hd_animal_instance_id)) return;
+  pendingHDReviewIds.add(item.hd_animal_instance_id);
   button.disabled = true;
-  const response = await fetch('/api/hd_review_decision', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action_token: item.action_token, hd_animal_instance_id: item.hd_animal_instance_id, ...payload})});
-  const data = await response.json().catch(() => ({ok: false}));
-  if (!response.ok || !data.ok) { button.disabled = false; return showError('HD profile decision could not be saved.'); }
+  const originQueue=activeHDReviewQueue,originCamera=$('hd-location-filter').value;
+  const priorIndex = hdReviewQueue.findIndex(x => x.hd_animal_instance_id === item.hd_animal_instance_id);
   hdReviewQueue = hdReviewQueue.filter(x => x.hd_animal_instance_id !== item.hd_animal_instance_id);
-  hdReviewProgress.remaining = Math.max(0, n(hdReviewProgress.remaining) - 1);
-  hdReviewProgress.completed = Math.min(n(hdReviewProgress.total), n(hdReviewProgress.completed) + 1);
-  if (item.camera_id && hdReviewProgress.by_camera && typeof hdReviewProgress.by_camera === 'object') {
-    hdReviewProgress.by_camera[item.camera_id] = Math.max(0, n(hdReviewProgress.by_camera[item.camera_id]) - 1);
+  renderHDReview(true);
+  const data = await postJSON('/api/hd_review_decision',{action_token:item.action_token,hd_animal_instance_id:item.hd_animal_instance_id,...payload});
+  if(!data.transportOK||!data.ok){pendingHDReviewIds.delete(item.hd_animal_instance_id);button.disabled=false;restoreHDReviewItem(item,priorIndex,originQueue,originCamera);return showError('HD profile decision could not be saved.');}
+  pendingHDReviewIds.delete(item.hd_animal_instance_id);
+  if(!data.pending_confirmation){
+    hdReviewProgress.remaining = Math.max(0, n(hdReviewProgress.remaining) - 1);
+    hdReviewProgress.completed = Math.min(n(hdReviewProgress.total), n(hdReviewProgress.completed) + 1);
+    if (item.camera_id && hdReviewProgress.by_camera && typeof hdReviewProgress.by_camera === 'object') {
+      hdReviewProgress.by_camera[item.camera_id] = Math.max(0, n(hdReviewProgress.by_camera[item.camera_id]) - 1);
+    }
   }
   renderHDReview(true);
+  await refillHDReviewQueue(true);
+}
+
+async function submitHDWorkflowAction(item, action, button, reason = null, note = '') {
+  if (pendingHDReviewIds.has(item.hd_animal_instance_id)) return;
+  pendingHDReviewIds.add(item.hd_animal_instance_id);
+  if (button) button.disabled = true;
+  const originQueue=activeHDReviewQueue,originCamera=$('hd-location-filter').value;
+  const priorIndex = hdReviewQueue.findIndex(x => x.hd_animal_instance_id === item.hd_animal_instance_id);
+  hdReviewQueue = hdReviewQueue.filter(x => x.hd_animal_instance_id !== item.hd_animal_instance_id);
+  renderHDReview(true);
+  const data = await postJSON('/api/hd_review_workflow',{action_token:item.action_token,hd_animal_instance_id:item.hd_animal_instance_id,action,reason,note});
+  pendingHDReviewIds.delete(item.hd_animal_instance_id);
+  if(!data.transportOK||!data.ok){if(button)button.disabled=false;restoreHDReviewItem(item,priorIndex,originQueue,originCamera);return showError('Profiling workflow action could not be saved.');}
+  await refillHDReviewQueue(true);
+}
+
+function openDetectorErrorDialog(item) {
+  const dialog=$('detector-error-dialog'),form=$('detector-error-form');
+  $('detector-error-reason').value='box_clipped'; $('detector-error-note').value='';
+  form.onsubmit=event=>{event.preventDefault();dialog.close();submitHDWorkflowAction(item,'detector_error',null,$('detector-error-reason').value,$('detector-error-note').value.trim());};
+  dialog.showModal();
+}
+
+function openBBoxEditor(item) {
+  const dialog=$('bbox-editor-dialog'),form=$('bbox-editor-form'),stage=$('bbox-editor-stage'),image=$('bbox-editor-image'),active=$('bbox-editor-active'),original=$('bbox-editor-original'),preview=$('bbox-editor-preview'),history=$('bbox-editor-history');
+  history.replaceChildren();(item.geometry_history||[]).forEach(entry=>{const row=document.createElement('p');row.textContent=`${formatDate(entry.created_at)} · ${String(entry.reason).replaceAll('_',' ')}${entry.note?` · ${entry.note}`:''}`;history.appendChild(row);});if(!history.children.length)history.textContent='No prior corrections.';
+  const sourceOriginal=item.original_bbox||item.bbox;let box={...item.bbox};let drag=null;
+  const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
+  const place=(target,value)=>{target.style.left=`${100*value.x}%`;target.style.top=`${100*value.y}%`;target.style.width=`${100*value.width}%`;target.style.height=`${100*value.height}%`;};
+  const render=()=>{place(original,sourceOriginal);place(active,box);preview.replaceChildren(makeInstanceCrop({...item,bbox:{...box}},'bbox-editor-preview-crop'));};
+  image.src=item.preview_url;image.referrerPolicy='no-referrer';image.onload=render;render();
+  active.onpointerdown=event=>{event.preventDefault();active.setPointerCapture(event.pointerId);drag={mode:event.target.closest('.bbox-editor-handle')?'resize':'move',x:event.clientX,y:event.clientY,box:{...box}};};
+  active.onpointermove=event=>{if(!drag)return;const rect=stage.getBoundingClientRect(),dx=(event.clientX-drag.x)/rect.width,dy=(event.clientY-drag.y)/rect.height;if(drag.mode==='move'){box.x=clamp(drag.box.x+dx,0,1-drag.box.width);box.y=clamp(drag.box.y+dy,0,1-drag.box.height);}else{box.width=clamp(drag.box.width+dx,.03,1-drag.box.x);box.height=clamp(drag.box.height+dy,.03,1-drag.box.y);}render();};
+  active.onpointerup=active.onpointercancel=()=>{drag=null;};
+  active.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();const dx=event.key==='ArrowLeft'?-.01:event.key==='ArrowRight'?.01:0,dy=event.key==='ArrowUp'?-.01:event.key==='ArrowDown'?.01:0;if(event.shiftKey){box.width=clamp(box.width+dx,.03,1-box.x);box.height=clamp(box.height+dy,.03,1-box.y);}else{box.x=clamp(box.x+dx,0,1-box.width);box.y=clamp(box.y+dy,0,1-box.height);}render();};
+  $('bbox-editor-reset').onclick=()=>{box={...sourceOriginal};render();};
+  form.onsubmit=async event=>{event.preventDefault();const button=form.querySelector('button[value="submit"]');button.disabled=true;const data=await postJSON('/api/hd_geometry_correction',{action_token:item.action_token,hd_animal_instance_id:item.hd_animal_instance_id,geometry_event_id:item.geometry_event_id||null,bbox:box,reason:$('bbox-editor-reason').value,note:$('bbox-editor-note').value.trim()});button.disabled=false;if(!data.transportOK||!data.ok)return showError('Corrected crop could not be saved.');item.bbox=data.bbox;item.geometry_event_id=data.geometry_event_id;dialog.close();await refillHDReviewQueue(true);};
+  dialog.showModal();
+}
+
+async function submitPendingAssignment(item, action, button) {
+  if(!item.proposal_token||!item.proposal_id||pendingHDReviewIds.has(item.hd_animal_instance_id))return;
+  pendingHDReviewIds.add(item.hd_animal_instance_id);button.disabled=true;
+  const originQueue=activeHDReviewQueue,originCamera=$('hd-location-filter').value;
+  const priorIndex=hdReviewQueue.findIndex(x=>x.hd_animal_instance_id===item.hd_animal_instance_id);
+  hdReviewQueue=hdReviewQueue.filter(x=>x.hd_animal_instance_id!==item.hd_animal_instance_id);renderHDReview(true);
+  const data=await postJSON('/api/hd_profile_assignment_review',{proposal_token:item.proposal_token,proposal_id:item.proposal_id,action});pendingHDReviewIds.delete(item.hd_animal_instance_id);
+  if(!data.transportOK||!data.ok){button.disabled=false;restoreHDReviewItem(item,priorIndex,originQueue,originCamera);return showError('Pending assignment could not be updated.');}
+  if(action==='confirm'){hdReviewProgress.remaining=Math.max(0,n(hdReviewProgress.remaining)-1);hdReviewProgress.completed=Math.min(n(hdReviewProgress.total),n(hdReviewProgress.completed)+1);}
+  await refillHDReviewQueue(true);
 }
 
 function renderCameraCards() {
@@ -915,7 +1045,8 @@ function showView(name) {
   document.querySelectorAll('[data-view-panel]').forEach(panel => { panel.hidden = panel.dataset.viewPanel !== name; });
   document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === name));
   history.replaceState(null, '', name === 'overview' ? location.pathname : `#${name}`);
-  renderActiveImageView();
+  if (name === 'hdreview') refillHDReviewQueue(true);
+  else renderActiveImageView();
   if (name === 'cameras') setTimeout(loadCameraMap, 0);
   if (name === 'photos') fetchAllPhotos(false).catch(error=>showError(error.message));
   window.scrollTo({top: 0, behavior: 'instant'});
@@ -938,6 +1069,7 @@ function updateCatalogViews(renderReviewView = true) {
   Object.entries(counts).forEach(([id, value]) => { const target = $(id); if (target) target.textContent = value; });
   const stats = operationalStats;
   renderPipeline();
+  renderPipelineHealth();
   renderGate1bStatus();
   populateCameraFilter();
   if (renderReviewView || activeView !== 'review') renderActiveImageView();
@@ -957,8 +1089,9 @@ async function fetchLibrary(options = {}) {
   gate1bMetrics = data.gate1b && typeof data.gate1b === 'object' ? data.gate1b : {};
   operationalStats = data.stats && typeof data.stats === 'object' ? data.stats : {};
   processOverview = data.process_overview && typeof data.process_overview === 'object' ? data.process_overview : {};
+  pipelineHealth = data.pipeline_health && typeof data.pipeline_health === 'object' ? data.pipeline_health : {};
+  if (pipelineHealth.overall) setHealth(pipelineHealth.overall);
   automationAudit = Array.isArray(data.automation_audit) ? data.automation_audit : [];
-  hdReviewQueue = Array.isArray(data.hd_review_queue) ? data.hd_review_queue : [];
   hdReviewProgress = data.hd_review_progress && typeof data.hd_review_progress === 'object'
     ? data.hd_review_progress : {total: hdReviewQueue.length, completed: 0, remaining: hdReviewQueue.length};
   mapboxToken = typeof data.mapbox_access_token === 'string' ? data.mapbox_access_token : '';
@@ -970,10 +1103,14 @@ async function refreshStatus() {
   const response = await fetch('/api/status', {cache: 'no-store'});
   const data = await response.json();
   if (!response.ok || !data.ok) throw new Error('Archive status is temporarily unavailable.');
-  setHealth(data.health);
   $('updated').textContent = `Last archive update · ${formatDate(data.updated_at)}`;
   const latest = data.latest || {};
   const verified = latest.verified || {};
+}
+
+async function postJSON(url, payload) {
+  try { const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); const data=await response.json().catch(()=>({ok:false})); return {...data,transportOK:response.ok}; }
+  catch(_error){ return {ok:false,transportOK:false,networkError:true}; }
 }
 
 function showError(message) {
@@ -981,7 +1118,14 @@ function showError(message) {
   $('error').style.display = 'block';
 }
 
+function selectHDReviewQueue(button) {
+  activeHDReviewQueue=button.dataset.hdQueue;
+  document.querySelectorAll('[data-hd-queue]').forEach(candidate=>{const selected=candidate===button;candidate.classList.toggle('active',selected);candidate.setAttribute('aria-selected',String(selected));candidate.tabIndex=selected?0:-1;});
+  refillHDReviewQueue(true);
+}
+
 async function initialize() {
+  document.querySelectorAll('dialog button[value="cancel"]').forEach(button=>button.addEventListener('click',()=>button.closest('dialog').close()));
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => showView(button.dataset.view)));
   const closeOtherMenus=()=>document.querySelectorAll('.other-toggle').forEach(toggle=>{toggle.setAttribute('aria-expanded','false');const menu=$(toggle.getAttribute('aria-controls'));if(menu)menu.hidden=true;});
   document.querySelectorAll('.other-toggle').forEach(toggle=>toggle.addEventListener('click',event=>{event.stopPropagation();const menu=$(toggle.getAttribute('aria-controls'));const open=toggle.getAttribute('aria-expanded')==='true';closeOtherMenus();toggle.setAttribute('aria-expanded',String(!open));if(menu)menu.hidden=open;}));
@@ -991,7 +1135,8 @@ async function initialize() {
   ['photo-date-from','photo-date-to','photo-time-of-day','photo-hour-from','photo-hour-to','camera-filter','photo-species','photo-male-antler','photo-profile-status','photo-identity-status','photo-variant','photo-sort'].forEach(id=>$(id).addEventListener('change',schedulePhotoQuery));
   $('photos-load-more').addEventListener('click',()=>fetchAllPhotos(true).catch(error=>showError(error.message)));
   $('photo-reset').addEventListener('click',()=>{['photo-date-from','photo-date-to','photo-hour-from','photo-hour-to','camera-filter','photo-species','photo-male-antler','photo-profile-status','photo-identity-status','photo-variant'].forEach(id=>{$(id).value='';});$('photo-time-of-day').value='all';$('photo-sort').value='newest';schedulePhotoQuery();});
-  $('hd-location-filter').addEventListener('change',()=>renderHDReview());
+  $('hd-location-filter').addEventListener('change',()=>refillHDReviewQueue(true));
+  document.querySelectorAll('[data-hd-queue]').forEach((button,index,buttons)=>{button.addEventListener('click',()=>selectHDReviewQueue(button));button.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const direction=event.key==='ArrowRight'?1:-1;const next=buttons[(index+direction+buttons.length)%buttons.length];next.focus();selectHDReviewQueue(next);});});
   $('deer-location-filter').addEventListener('change',()=>renderDeerProfiles());
   $('profile-gallery-back').addEventListener('click', () => { profileGalleryRequestGeneration++; activeProfileId = null; $('profile-gallery').hidden = true; $('deer-grid').hidden = false; });
   document.querySelectorAll('[data-review-queue]').forEach(button => button.addEventListener('click', () => {

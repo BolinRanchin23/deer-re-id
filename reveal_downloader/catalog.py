@@ -22,6 +22,7 @@ from .supabase import (
 )
 
 LIBRARY_DEADLINE_SECONDS = 25.0
+INTERACTIVE_DEADLINE_SECONDS = 8.0
 LIBRARY_PREVIEW_SECONDS = 300
 LIBRARY_REVIEW_SECONDS = 900
 HD_REQUEST_DEADLINE_SECONDS = 15.0
@@ -80,8 +81,17 @@ class SupabaseCatalog:
             max_response_bytes=MAX_STORAGE_JSON_BYTES,
         )
         if response.status != 200:
+            detail = ""
+            try:
+                error_payload = json.loads(response.body.decode("utf-8"))
+                message = error_payload.get("message") if isinstance(error_payload, Mapping) else None
+                code = error_payload.get("code") if isinstance(error_payload, Mapping) else None
+                if isinstance(message, str) and message and len(message) <= 200 and isinstance(code, str) and len(code) <= 40:
+                    detail = f" [{code}] {message}"
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                pass
             raise StorageError(
-                f"Supabase private catalog read failed with HTTP {response.status}",
+                f"Supabase private catalog RPC failed with HTTP {response.status}{detail}",
                 http_status=response.status,
             )
         try:
@@ -120,6 +130,9 @@ class SupabaseCatalog:
 
     def read_process_overview(self) -> Any:
         return self._rpc("deerid_process_overview", {})
+
+    def read_pipeline_health(self) -> Any:
+        return self._rpc("deerid_pipeline_health", {})
 
     def query_all_photos(self, filters: Mapping[str, Any]) -> Any:
         return self._rpc("deerid_all_photos", {"p_" + key: value for key, value in filters.items()})
@@ -305,14 +318,55 @@ class SupabaseCatalog:
     def read_hd_review_queue(self, limit: int = 60) -> Any:
         return self._rpc("deerid_hd_review_queue", {"p_limit": limit})
 
+    def read_hd_review_queue_page(
+        self, limit: int, camera_id: Optional[str] = None, queue: str = "active"
+    ) -> Any:
+        return self._rpc(
+            "deerid_hd_review_queue_page",
+            {
+                "p_limit": max(1, min(31, int(limit))),
+                "p_camera_id": camera_id,
+                "p_queue": queue,
+            },
+        )
+
     def read_hd_review_progress(self) -> Any:
         return self._rpc("deerid_hd_review_progress", {})
+
+    def record_hd_review_workflow_action(
+        self,
+        result_id: int,
+        instance_id: str,
+        action: str,
+        reason: Optional[str] = None,
+        note: str = "",
+    ) -> Any:
+        return self._rpc(
+            "deerid_record_hd_review_workflow_action",
+            {
+                "p_hd_review_result_id": result_id,
+                "p_hd_animal_instance_id": instance_id,
+                "p_action": action,
+                "p_reason": reason,
+                "p_note": note or None,
+            },
+        )
 
     def record_automation_label(self, event_id: int, verdict: str, note: str = "") -> Any:
         return self._rpc("deerid_record_gate1b_automation_label", {"p_automation_event_id": event_id, "p_verdict": verdict, "p_note": note or None})
 
     def record_hd_review_decision(self, result_id: int, action: str, *, instance_id: Optional[str] = None, profile_id: Optional[str] = None, display_name: str = "", species: str = "", sex: str = "", note: str = "") -> Any:
         return self._rpc("deerid_record_hd_review_decision", {"p_hd_review_result_id": result_id, "p_action": action, "p_profile_id": profile_id, "p_display_name": display_name or None, "p_species": species or None, "p_sex": sex or None, "p_note": note or None, "p_hd_animal_instance_id": instance_id})
+
+    def propose_hd_profile_assignment(self, result_id: int, instance_id: str, action: str, **fields: Any) -> Any:
+        return self._rpc("deerid_propose_hd_profile_assignment", {"p_hd_review_result_id": result_id, "p_hd_animal_instance_id": instance_id, "p_action": action, "p_profile_id": fields.get("profile_id"), "p_display_name": fields.get("display_name") or None, "p_species": fields.get("species") or None, "p_sex": fields.get("sex") or None, "p_note": fields.get("note") or None})
+
+    def review_hd_profile_assignment(self, proposal_id: str, event_id: int, action: str) -> Any:
+        rpc = "deerid_confirm_hd_profile_assignment" if action == "confirm" else "deerid_undo_hd_profile_assignment"
+        return self._rpc(rpc, {"p_proposal_id": proposal_id, "p_expected_event_id": event_id})
+
+    def correct_hd_instance_bbox(self, result_id: int, instance_id: str, expected_event_id: Optional[int], bbox: Mapping[str, Any], reason: str, note: str = "") -> Any:
+        return self._rpc("deerid_correct_hd_instance_bbox", {"p_hd_review_result_id": result_id, "p_hd_animal_instance_id": instance_id, "p_expected_geometry_event_id": expected_event_id, "p_bbox_x": bbox["x"], "p_bbox_y": bbox["y"], "p_bbox_width": bbox["width"], "p_bbox_height": bbox["height"], "p_reason": reason, "p_note": note or None})
 
     def reassign_hd_instance(self, assignment_event_id: int, profile_id: str) -> Any:
         return self._rpc("deerid_reassign_hd_instance", {"p_assignment_event_id": assignment_event_id, "p_profile_id": profile_id})
@@ -391,15 +445,20 @@ def handle_library(
         gate1b = _sanitize_gate1b_metrics(catalog.read_gate1b_metrics())
         stats = _sanitize_operational_stats(catalog.read_operational_stats())
         process_overview = _sanitize_process_overview(catalog.read_process_overview())
+        pipeline_health = _sanitize_pipeline_health(catalog.read_pipeline_health())
         automation_audit = _sanitize_auxiliary_media_rows(catalog.read_automation_audit(20), signing_key, current, "automation_event_id")
         # Keep the workspace bootstrap below the bounded PostgREST transport limit.
         # Profiling owns subsequent queue slices; All Photos owns archive paging.
-        hd_review_queue = _sanitize_auxiliary_media_rows(catalog.read_hd_review_queue(5), signing_key, current, "hd_review_result_id")
+        hd_review_queue = _sanitize_hd_review_queue_page(catalog.read_hd_review_queue(5), signing_key, current, 5)
         raw_hd_progress = catalog.read_hd_review_progress()
         hd_review_progress = {
             "total": max(0, int(raw_hd_progress.get("total", 0))),
             "completed": max(0, int(raw_hd_progress.get("completed", 0))),
             "remaining": max(0, int(raw_hd_progress.get("remaining", 0))),
+            "profiling_ready": max(0, int(raw_hd_progress.get("profiling_ready", 0))),
+            "deferred": max(0, int(raw_hd_progress.get("deferred", 0))),
+            "pending_confirmation": max(0, int(raw_hd_progress.get("pending_confirmation", 0))),
+            "detector_errors": max(0, int(raw_hd_progress.get("detector_errors", 0))),
             "by_camera": {
                 camera_id: max(0, int(count))
                 for camera_id, count in dict(raw_hd_progress.get("by_camera") or {}).items()
@@ -418,6 +477,7 @@ def handle_library(
         "gate1b": gate1b,
         "stats": stats,
         "process_overview": process_overview,
+        "pipeline_health": pipeline_health,
         "automation_audit": automation_audit,
         "hd_review_queue": hd_review_queue,
         "hd_review_progress": hd_review_progress,
@@ -472,6 +532,179 @@ def handle_profile_gallery(
         logging.exception("DeerID profile gallery assembly failed")
         return 503, {"ok": False, "error": "profile gallery unavailable"}
     return 200, {"ok": True, "items": rows}
+
+
+def handle_hd_review_queue(
+    environ: Mapping[str, str],
+    query: Mapping[str, Any],
+    *,
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Return one bounded authoritative profiling-queue refill page."""
+    signing_key = _signing_key(environ)
+    url = environ.get("SUPABASE_URL", "")
+    secret = environ.get("SUPABASE_SECRET_KEY", "")
+    try:
+        limit = int(query.get("limit", 15))
+    except (TypeError, ValueError):
+        return 400, {"ok": False, "error": "invalid queue request"}
+    camera_id = query.get("camera_id") or None
+    queue = query.get("queue", "active")
+    if (
+        signing_key is None
+        or not url
+        or not secret
+        or limit < 1
+        or limit > 30
+        or (camera_id is not None and (not isinstance(camera_id, str) or _UUID.fullmatch(camera_id) is None))
+        or not isinstance(queue, str)
+        or queue not in {"active", "deferred", "pending", "issues"}
+    ):
+        return 400, {"ok": False, "error": "invalid queue request"}
+    current = int(time.time()) if epoch_now is None else int(epoch_now)
+    try:
+        catalog = catalog_factory(
+            url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
+        )
+        clock = time.monotonic
+        catalog.set_deadline(clock() + INTERACTIVE_DEADLINE_SECONDS, clock=clock)
+        raw = catalog.read_hd_review_queue_page(limit + 1, camera_id, queue)
+        if not isinstance(raw, Mapping) or not isinstance(raw.get("items"), list):
+            raise StorageError("HD review queue is unavailable")
+        raw_items = raw["items"]
+        items = _sanitize_hd_review_queue_page(raw_items[:limit], signing_key, current, limit)
+        if not isinstance(raw.get("has_more"), bool): raise StorageError("HD review queue is unavailable")
+        has_more = raw["has_more"] or len(raw_items) > limit
+        raw_progress = raw.get("progress")
+        if not isinstance(raw_progress, Mapping): raise StorageError("HD review queue is unavailable")
+        progress: Dict[str, Any] = {field: max(0, int(raw_progress.get(field, 0))) for field in ("total","completed","remaining","profiling_ready","deferred","pending_confirmation","detector_errors")}
+        progress["by_camera"] = {camera: max(0,int(count)) for camera,count in dict(raw_progress.get("by_camera") or {}).items() if isinstance(camera,str) and _UUID.fullmatch(camera)}
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError):
+        logging.exception("DeerID HD review queue assembly failed")
+        return 503, {"ok": False, "error": "HD review queue unavailable"}
+    return 200, {"ok": True, "items": items, "has_more": has_more, "progress": progress}
+
+
+def _mutation_error_response(exc: Exception, unavailable: str) -> Tuple[int, Dict[str, Any]]:
+    message = str(exc).lower()
+    if any(marker in message for marker in ("stale", "conflict", "already resolved", "not pending", "pending assignment")):
+        return 409, {"ok": False, "error": "conflicting workflow state"}
+    if "invalid" in message or "not found" in message:
+        return 400, {"ok": False, "error": "invalid workflow action"}
+    return 503, {"ok": False, "error": unavailable}
+
+
+def handle_hd_review_workflow(
+    environ: Mapping[str, str],
+    token: str,
+    instance_id: str,
+    action: str,
+    *,
+    reason: Optional[str] = None,
+    note: str = "",
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Append one durable per-animal profiling workflow transition."""
+    signing_key = _signing_key(environ)
+    current = int(time.time()) if epoch_now is None else int(epoch_now)
+    capability = (
+        _verify_hd_instance_action_token(token, signing_key, current)
+        if signing_key is not None
+        else None
+    )
+    result_id = capability[0] if capability is not None else None
+    allowed_reasons = {
+        "wrong_deer", "box_clipped", "multiple_deer", "missed_deer",
+        "inseparable", "false_detection", "other",
+    }
+    if capability is None or not isinstance(instance_id, str) or capability[1] != instance_id:
+        return 404, {"ok": False, "error": "not found"}
+    if (
+        not isinstance(action, str)
+        or action not in {"defer", "reopen", "detector_error"}
+        or (reason is not None and (not isinstance(reason, str) or reason not in allowed_reasons))
+        or (action == "detector_error" and reason is None)
+        or not isinstance(note, str)
+        or len(note) > 500
+    ):
+        return 400, {"ok": False, "error": "invalid profiling workflow action"}
+    url = environ.get("SUPABASE_URL", "")
+    secret = environ.get("SUPABASE_SECRET_KEY", "")
+    if not url or not secret:
+        return 404, {"ok": False, "error": "not found"}
+    try:
+        catalog = catalog_factory(
+            url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")
+        )
+        clock = time.monotonic
+        catalog.set_deadline(clock() + INTERACTIVE_DEADLINE_SECONDS, clock=clock)
+        result = catalog.record_hd_review_workflow_action(
+            result_id, instance_id, action, reason, note.strip()
+        )
+        if not isinstance(result, Mapping) or not result.get("ok"):
+            raise StorageError("Profiling workflow action failed")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError) as exc:
+        logging.exception("DeerID profiling workflow action failed")
+        return _mutation_error_response(exc, "profiling workflow unavailable")
+    return 200, {field: result[field] for field in ("ok","state","event_id","replayed","hd_animal_instance_id") if field in result}
+
+
+def handle_hd_profile_assignment_review(
+    environ: Mapping[str, str], token: str, proposal_id: str, action: str, *,
+    catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Confirm or undo one pending profile assignment proposal."""
+    signing_key = _signing_key(environ)
+    current = int(time.time()) if epoch_now is None else int(epoch_now)
+    event_id = _verify_aux_action_token(token, "proposal", signing_key, current) if signing_key is not None else None
+    if event_id is None:
+        return 404, {"ok": False, "error": "not found"}
+    if not isinstance(proposal_id, str) or _UUID.fullmatch(proposal_id) is None or not isinstance(action, str) or action not in {"confirm", "undo"}:
+        return 400, {"ok": False, "error": "invalid pending assignment action"}
+    url = environ.get("SUPABASE_URL", ""); secret = environ.get("SUPABASE_SECRET_KEY", "")
+    if not url or not secret: return 404, {"ok": False, "error": "not found"}
+    try:
+        catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos"))
+        clock = time.monotonic; catalog.set_deadline(clock() + INTERACTIVE_DEADLINE_SECONDS, clock=clock)
+        result = catalog.review_hd_profile_assignment(proposal_id, event_id, action)
+        if not isinstance(result, Mapping) or not result.get("ok"): raise StorageError("Pending assignment action failed")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError) as exc:
+        logging.exception("DeerID pending assignment action failed")
+        return _mutation_error_response(exc, "pending assignment unavailable")
+    return 200, {field: result[field] for field in ("ok","confirmed","undone","replayed","proposal_id","profile_id","assignment_event_id","hd_animal_instance_id") if field in result}
+
+
+def handle_hd_geometry_correction(
+    environ: Mapping[str, str], token: str, instance_id: str,
+    expected_event_id: Optional[int], bbox: Mapping[str, Any], reason: str, *,
+    note: str = "", catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog,
+    epoch_now: Optional[int] = None,
+) -> Tuple[int, Dict[str, Any]]:
+    """Append one stale-safe corrected crop box without rewriting detector evidence."""
+    signing_key = _signing_key(environ); current = int(time.time()) if epoch_now is None else int(epoch_now)
+    capability = _verify_hd_instance_action_token(token, signing_key, current) if signing_key is not None else None
+    result_id = capability[0] if capability is not None else None
+    try:
+        safe_bbox = _sanitize_bbox(bbox)
+    except (AttributeError, TypeError, ValueError, StorageError):
+        return 400, {"ok": False, "error": "invalid geometry correction"}
+    if capability is None or not isinstance(instance_id, str) or capability[1] != instance_id:
+        return 404, {"ok": False, "error": "not found"}
+    if (expected_event_id is not None and (not isinstance(expected_event_id, int) or isinstance(expected_event_id, bool) or expected_event_id < 1)) or not isinstance(reason, str) or reason not in {"rebox", "clipped_antlers", "wrong_deer", "other"} or not isinstance(note, str) or len(note) > 500:
+        return 400, {"ok": False, "error": "invalid geometry correction"}
+    url = environ.get("SUPABASE_URL", ""); secret = environ.get("SUPABASE_SECRET_KEY", "")
+    if not url or not secret: return 404, {"ok": False, "error": "not found"}
+    try:
+        catalog = catalog_factory(url, secret, environ.get("SUPABASE_BUCKET", "tactacam-photos")); clock = time.monotonic; catalog.set_deadline(clock() + INTERACTIVE_DEADLINE_SECONDS, clock=clock)
+        result = catalog.correct_hd_instance_bbox(result_id, instance_id, expected_event_id, safe_bbox, reason, note.strip())
+        if not isinstance(result, Mapping) or not result.get("ok"): raise StorageError("Geometry correction failed")
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, StorageError) as exc:
+        logging.exception("DeerID geometry correction failed")
+        return _mutation_error_response(exc, "geometry correction unavailable")
+    return 200, {field: result[field] for field in ("ok","geometry_event_id","hd_animal_instance_id","bbox") if field in result}
 
 
 def handle_library_preview(
@@ -696,19 +929,25 @@ def handle_hd_review_decision(
     environ: Mapping[str, str], token: str, action: str, *, instance_id: str = "", profile_id: str = "", display_name: str = "", species: str = "", sex: str = "", note: str = "", catalog_factory: Callable[[str, str, str], Any] = SupabaseCatalog, epoch_now: Optional[int] = None,
 ) -> Tuple[int, Dict[str, Any]]:
     key = _signing_key(environ); current = int(time.time()) if epoch_now is None else int(epoch_now)
-    result_id = _verify_aux_action_token(token, "hdreview", key, current) if key is not None else None
-    if result_id is None or _UUID.fullmatch(instance_id or "") is None or action not in {"create_profile", "match_profile", "not_identity_worthy", "defer"} or any(not isinstance(x, str) for x in (profile_id, display_name, species, sex, note)) or len(note) > 500:
+    capability = _verify_hd_instance_action_token(token, key, current) if key is not None else None
+    result_id = capability[0] if capability is not None else None
+    if capability is None or not isinstance(instance_id, str) or capability[1] != instance_id or not isinstance(action, str) or action not in {"create_profile", "match_profile", "not_identity_worthy", "defer"} or any(not isinstance(x, str) for x in (profile_id, display_name, species, sex, note)) or len(note) > 500:
         return 404, {"ok": False, "error": "not found"}
     if action == "match_profile" and _UUID.fullmatch(profile_id) is None:
+        return 400, {"ok": False, "error": "invalid HD review decision"}
+    if action == "create_profile" and (not 1 <= len(display_name.strip()) <= 80 or species not in {"white-tailed deer", "axis deer", "other deer"} or sex not in {"male", "female", "unknown"}):
         return 400, {"ok": False, "error": "invalid HD review decision"}
     url=environ.get("SUPABASE_URL",""); secret=environ.get("SUPABASE_SECRET_KEY","")
     if not url or not secret: return 404, {"ok": False, "error": "not found"}
     try:
-        catalog=catalog_factory(url,secret,environ.get("SUPABASE_BUCKET","tactacam-photos")); clock=time.monotonic; catalog.set_deadline(clock()+LIBRARY_DEADLINE_SECONDS,clock=clock)
-        result=catalog.record_hd_review_decision(result_id,action,instance_id=instance_id,profile_id=profile_id or None,display_name=display_name,species=species,sex=sex,note=note.strip())
+        catalog=catalog_factory(url,secret,environ.get("SUPABASE_BUCKET","tactacam-photos")); clock=time.monotonic; catalog.set_deadline(clock()+INTERACTIVE_DEADLINE_SECONDS,clock=clock)
+        if action in {"create_profile", "match_profile"}:
+            result=catalog.propose_hd_profile_assignment(result_id,instance_id,action,profile_id=profile_id or None,display_name=display_name,species=species,sex=sex,note=note.strip())
+        else:
+            result=catalog.record_hd_review_decision(result_id,action,instance_id=instance_id,profile_id=profile_id or None,display_name=display_name,species=species,sex=sex,note=note.strip())
         if not isinstance(result,Mapping) or not result.get("ok"): raise StorageError("HD review decision failed")
-    except (AttributeError,OSError,RuntimeError,TypeError,ValueError,StorageError): return 503,{"ok":False,"error":"HD review decision unavailable"}
-    return 200,dict(result)
+    except (AttributeError,OSError,RuntimeError,TypeError,ValueError,StorageError) as exc: return _mutation_error_response(exc,"HD review decision unavailable")
+    return 200,{field:result[field] for field in ("ok","action","profile_id","hd_animal_instance_id","pending_confirmation","proposal_id","replayed") if field in result}
 
 
 def handle_profile_reassignment(
@@ -966,6 +1205,74 @@ def _sanitize_auxiliary_media_rows(value: Any, key: bytes, now: int, id_field: s
         safe["preview_url"] = "/api/library_preview?token=" + token
         purpose = "audit" if id_field == "automation_event_id" else "hdreview"
         safe["action_token"] = _sign_aux_action_token(row_id, purpose, now + LIBRARY_REVIEW_SECONDS, key)
+        proposal_id = raw.get("proposal_id")
+        proposal_event_id = raw.get("proposal_event_id")
+        if isinstance(proposal_id, str) and _UUID.fullmatch(proposal_id) and isinstance(proposal_event_id, int) and not isinstance(proposal_event_id, bool) and proposal_event_id > 0:
+            safe["proposal_token"] = _sign_aux_action_token(proposal_event_id, "proposal", now + LIBRARY_REVIEW_SECONDS, key)
+        output.append(safe)
+    return output
+
+
+def _sanitize_hd_review_queue_page(value: Any, key: bytes, now: int, limit: int) -> list[Dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > limit:
+        raise StorageError("HD review queue is unavailable")
+    output: list[Dict[str, Any]] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            raise StorageError("HD review queue is unavailable")
+        result_id, instance_id, media_id, asset_id = raw.get("hd_review_result_id"), raw.get("hd_animal_instance_id"), raw.get("media_id"), raw.get("media_asset_id")
+        if not isinstance(result_id, int) or isinstance(result_id, bool) or result_id < 1 or not isinstance(instance_id, str) or _UUID.fullmatch(instance_id) is None or not isinstance(media_id, str) or _UUID.fullmatch(media_id) is None or not isinstance(asset_id, str) or _UUID.fullmatch(asset_id) is None:
+            raise StorageError("HD review queue is unavailable")
+        analysis = raw.get("result")
+        if not isinstance(analysis, Mapping) or len(json.dumps(analysis, separators=(",", ":"))) > 32768:
+            raise StorageError("HD review queue is unavailable")
+        analysis_fields = ("species","sex","summary","age_cues","view_angle","visible_tines_left","visible_tines_right","tine_count_limitations","antler_structure","age_class","identity_eligible","age_eligible","antler_score_eligible","antler_score_range","distinguishing_features")
+        clean_analysis: Dict[str, Any] = {}
+        for field in analysis_fields:
+            candidate = analysis.get(field)
+            if candidate is None or isinstance(candidate, (str, int, float, bool)):
+                clean_analysis[field] = candidate
+            elif isinstance(candidate, list) and len(candidate) <= 40 and all(item is None or isinstance(item, (str, int, float, bool)) for item in candidate):
+                clean_analysis[field] = list(candidate)
+        captured_at, created_at, camera_id = raw.get("captured_at"), raw.get("created_at"), raw.get("camera_id")
+        if not isinstance(captured_at, str) or len(captured_at) > 64 or not isinstance(created_at, str) or len(created_at) > 64 or (camera_id is not None and (not isinstance(camera_id, str) or _UUID.fullmatch(camera_id) is None)):
+            raise StorageError("HD review queue is unavailable")
+        raw_history = raw.get("geometry_history") or []
+        if not isinstance(raw_history, list) or len(raw_history) > 10:
+            raise StorageError("HD review queue is unavailable")
+        geometry_history = []
+        for entry in raw_history:
+            if not isinstance(entry, Mapping) or not isinstance(entry.get("id"), int) or not isinstance(entry.get("reason"), str) or not isinstance(entry.get("created_at"), str) or len(entry["created_at"]) > 64:
+                raise StorageError("HD review queue is unavailable")
+            geometry_history.append({"id":entry["id"],"reason":entry["reason"][:40],"note":str(entry.get("note") or "")[:500],"created_at":entry["created_at"],"bbox":_sanitize_bbox(entry.get("bbox") or {})})
+        safe: Dict[str, Any] = {
+            "hd_review_result_id": result_id, "hd_animal_instance_id": instance_id, "media_id": media_id, "media_asset_id": asset_id,
+            "instance_index": int(raw.get("instance_index") or 0), "instance_count": int(raw.get("instance_count") or 0),
+            "bbox": _sanitize_bbox(raw.get("bbox") or {}), "original_bbox": _sanitize_bbox(raw.get("original_bbox") or raw.get("bbox") or {}),
+            "geometry_event_id": raw.get("geometry_event_id"), "geometry_history": geometry_history, "detection_complete": raw.get("detection_complete") is True,
+            "detection_notes": str(raw.get("detection_notes") or "")[:500], "model_name": str(raw.get("model_name") or "")[:120], "model_version": str(raw.get("model_version") or "")[:160],
+            "result": clean_analysis, "created_at": created_at, "captured_at": captured_at, "camera_id": camera_id, "camera_name": str(raw.get("camera_name") or "")[:100],
+            "workflow_state": raw.get("workflow_state"), "workflow_reason": raw.get("workflow_reason"), "workflow_note": raw.get("workflow_note"), "proposal_state": raw.get("proposal_state"), "proposal_action": raw.get("proposal_action"), "proposed_profile_id": raw.get("proposed_profile_id"),
+            "proposed_display_name": raw.get("proposed_display_name"), "proposal_id": raw.get("proposal_id"), "proposal_event_id": raw.get("proposal_event_id"),
+        }
+        if safe["instance_index"] < 1 or safe["instance_count"] < safe["instance_index"]:
+            raise StorageError("HD review queue is unavailable")
+        if safe["geometry_event_id"] is not None and (not isinstance(safe["geometry_event_id"], int) or isinstance(safe["geometry_event_id"], bool) or safe["geometry_event_id"] < 1):
+            raise StorageError("HD review queue is unavailable")
+        if safe["workflow_state"] not in {None,"active","reopen","defer","detector_error"} or safe["proposal_state"] not in {None,"pending","confirmed","undone"} or safe["proposal_action"] not in {None,"create_profile","match_profile"}:
+            raise StorageError("HD review queue is unavailable")
+        if safe["workflow_reason"] not in {None,"wrong_deer","box_clipped","multiple_deer","missed_deer","inseparable","false_detection","other"} or (safe["workflow_note"] is not None and (not isinstance(safe["workflow_note"], str) or len(safe["workflow_note"]) > 500)):
+            raise StorageError("HD review queue is unavailable")
+        if safe["proposal_id"] is not None and (not isinstance(safe["proposal_id"], str) or _UUID.fullmatch(safe["proposal_id"]) is None):
+            raise StorageError("HD review queue is unavailable")
+        if safe["proposed_profile_id"] is not None and (not isinstance(safe["proposed_profile_id"], str) or _UUID.fullmatch(safe["proposed_profile_id"]) is None):
+            raise StorageError("HD review queue is unavailable")
+        if safe["proposed_display_name"] is not None and (not isinstance(safe["proposed_display_name"], str) or len(safe["proposed_display_name"]) > 80):
+            raise StorageError("HD review queue is unavailable")
+        safe["preview_url"] = "/api/library_preview?token=" + _sign_asset_token(asset_id, now + LIBRARY_PREVIEW_SECONDS, key)
+        safe["action_token"] = _sign_hd_instance_action_token(result_id, instance_id, now + LIBRARY_REVIEW_SECONDS, key)
+        if isinstance(safe["proposal_id"], str) and _UUID.fullmatch(safe["proposal_id"]) and isinstance(safe["proposal_event_id"], int) and not isinstance(safe["proposal_event_id"], bool) and safe["proposal_event_id"] > 0:
+            safe["proposal_token"] = _sign_aux_action_token(safe["proposal_event_id"], "proposal", now + LIBRARY_REVIEW_SECONDS, key)
         output.append(safe)
     return output
 
@@ -1018,18 +1325,20 @@ def _sanitize_profiles(value: Any, key: bytes | None = None, now: int = 0) -> li
                 "camera_ids": [value for value in list(raw.get("camera_ids") or []) if isinstance(value, str) and _UUID.fullmatch(value)],
                 "camera_names": [str(value)[:100] for value in list(raw.get("camera_names") or []) if value],
                 "representative_assignment_event_id": raw.get("representative_assignment_event_id"),
-                "preview_urls": [
-                    "/api/library_preview?token=" + _sign_media_token(item["media_id"], now + LIBRARY_PREVIEW_SECONDS, key)
-                    for item in list(raw.get("profile_previews") or [])[:5]
-                    if key is not None and isinstance(item, Mapping) and isinstance(item.get("media_id"), str) and _UUID.fullmatch(item["media_id"])
-                ],
+                "profile_crops": [],
             }
         previews=list(raw.get("profile_previews") or [])[:5]
-        representative=next((item for item in previews if isinstance(item,Mapping) and item.get("is_representative") is True),None)
+        for preview in previews:
+            if not isinstance(preview, Mapping):
+                raise StorageError("Deer profiles are unavailable")
+            asset_id=preview.get("media_asset_id");instance_id=preview.get("hd_animal_instance_id");bbox=preview.get("bbox")
+            if key is None or not isinstance(asset_id,str) or _UUID.fullmatch(asset_id) is None or not isinstance(instance_id,str) or _UUID.fullmatch(instance_id) is None or not isinstance(bbox,Mapping):
+                raise StorageError("Deer profiles are unavailable")
+            crop={"preview_url":"/api/library_preview?token="+_sign_asset_token(asset_id,now+LIBRARY_PREVIEW_SECONDS,key),"bbox":_sanitize_bbox(bbox),"crop_recipe":preview.get("crop_recipe"),"hd_animal_instance_id":instance_id,"is_representative":preview.get("is_representative") is True}
+            profile["profile_crops"].append(crop)
+        representative=next((crop for crop in profile["profile_crops"] if crop["is_representative"]),None)
         if representative is not None:
-            asset_id=representative.get("media_asset_id");instance_id=representative.get("hd_animal_instance_id");bbox=representative.get("bbox")
-            if key is not None and isinstance(asset_id,str) and _UUID.fullmatch(asset_id) and isinstance(instance_id,str) and _UUID.fullmatch(instance_id) and isinstance(bbox,Mapping):
-                profile["representative_crop"]={"preview_url":"/api/library_preview?token="+_sign_asset_token(asset_id,now+LIBRARY_PREVIEW_SECONDS,key),"bbox":_sanitize_bbox(bbox),"crop_recipe":representative.get("crop_recipe"),"hd_animal_instance_id":instance_id}
+            profile["representative_crop"]={field:representative[field] for field in ("preview_url","bbox","crop_recipe","hd_animal_instance_id")}
         profiles.append(profile)
     return profiles
 
@@ -1076,10 +1385,9 @@ def _sanitize_profile_gallery(
         instance_id = raw.get("hd_animal_instance_id")
         event_id = raw.get("assignment_event_id")
         safe["camera_id"] = camera_id
-        if isinstance(asset_id, str) and _UUID.fullmatch(asset_id) and isinstance(instance_id, str) and _UUID.fullmatch(instance_id) and isinstance(raw.get("bbox"), Mapping) and isinstance(event_id, int) and not isinstance(event_id, bool) and event_id > 0:
-            safe.update({"media_asset_id": asset_id, "hd_animal_instance_id": instance_id, "bbox": _sanitize_bbox(raw["bbox"]), "crop_recipe": crop_recipe, "preview_url": "/api/library_preview?token=" + _sign_asset_token(asset_id, now + LIBRARY_PREVIEW_SECONDS, key), "reassign_token": _sign_aux_action_token(event_id, "reassign", now + LIBRARY_REVIEW_SECONDS, key), "representative_token": _sign_aux_action_token(event_id, "representative", now + LIBRARY_REVIEW_SECONDS, key)})
-        else:
-            safe["preview_url"] = "/api/library_preview?token=" + _sign_media_token(media_id, now + LIBRARY_PREVIEW_SECONDS, key)
+        if not isinstance(asset_id, str) or _UUID.fullmatch(asset_id) is None or not isinstance(instance_id, str) or _UUID.fullmatch(instance_id) is None or not isinstance(raw.get("bbox"), Mapping) or not isinstance(event_id, int) or isinstance(event_id, bool) or event_id < 1:
+            raise StorageError("Profile gallery is unavailable")
+        safe.update({"media_asset_id": asset_id, "hd_animal_instance_id": instance_id, "bbox": _sanitize_bbox(raw["bbox"]), "crop_recipe": crop_recipe, "preview_url": "/api/library_preview?token=" + _sign_asset_token(asset_id, now + LIBRARY_PREVIEW_SECONDS, key), "reassign_token": _sign_aux_action_token(event_id, "reassign", now + LIBRARY_REVIEW_SECONDS, key), "representative_token": _sign_aux_action_token(event_id, "representative", now + LIBRARY_REVIEW_SECONDS, key)})
         output.append(safe)
     return output
 
@@ -1156,6 +1464,30 @@ def _sanitize_process_overview(value: Any) -> Dict[str, Any]:
                 raise StorageError("Process overview is unavailable")
             clean[field] = count
         output[window] = clean
+    return output
+
+
+def _sanitize_pipeline_health(value: Any) -> Dict[str, Any]:
+    stage_names = ("ingestion", "gate1", "gate1b", "hd_requests", "hd_returns", "hd_analysis", "profiling")
+    if not isinstance(value, Mapping) or not isinstance(value.get("as_of"), str) or value.get("overall") not in {"healthy", "degraded", "error", "unknown"} or not isinstance(value.get("stages"), Mapping):
+        raise StorageError("Pipeline health is unavailable")
+    output: Dict[str, Any] = {"as_of": value["as_of"], "overall": value["overall"], "stages": {}}
+    for name in stage_names:
+        raw = value["stages"].get(name)
+        if not isinstance(raw, Mapping) or not isinstance(raw.get("telemetry_complete"), bool):
+            raise StorageError("Pipeline health is unavailable")
+        clean: Dict[str, Any] = {"telemetry_complete": raw["telemetry_complete"]}
+        for field in ("last_success_at", "oldest_pending_at"):
+            candidate = raw.get(field)
+            if candidate is not None and (not isinstance(candidate, str) or len(candidate) > 64):
+                raise StorageError("Pipeline health is unavailable")
+            clean[field] = candidate
+        for field in ("pending_count", "stale_claim_count", "failure_count_24h"):
+            candidate = raw.get(field)
+            if candidate is not None and (not isinstance(candidate, int) or isinstance(candidate, bool) or candidate < 0):
+                raise StorageError("Pipeline health is unavailable")
+            clean[field] = candidate
+        output["stages"][name] = clean
     return output
 
 
@@ -1272,6 +1604,23 @@ def _sign_aux_action_token(row_id: int, purpose: str, expires: int, key: bytes) 
     payload = f"{expires}.{purpose}.{row_id}"
     signature = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
+
+
+def _sign_hd_instance_action_token(result_id: int, instance_id: str, expires: int, key: bytes) -> str:
+    payload = f"{expires}.hdinstance.{result_id}.{instance_id}"
+    signature = hmac.new(key, payload.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _verify_hd_instance_action_token(token: str, key: bytes, now: int) -> Optional[Tuple[int, str]]:
+    parts = token.split(".") if isinstance(token, str) else []
+    if len(parts) != 5 or parts[1] != "hdinstance" or not parts[0].isdigit() or not parts[2].isdigit() or _UUID.fullmatch(parts[3]) is None:
+        return None
+    expires, result_id, instance_id = int(parts[0]), int(parts[2]), parts[3]
+    if result_id < 1 or expires < now or expires > now + LIBRARY_REVIEW_SECONDS + 30:
+        return None
+    expected = hmac.new(key, f"{expires}.hdinstance.{result_id}.{instance_id}".encode("ascii"), hashlib.sha256).hexdigest()
+    return (result_id, instance_id) if hmac.compare_digest(parts[4], expected) else None
 
 
 def _verify_aux_action_token(token: str, purpose: str, key: bytes, now: int) -> Optional[int]:

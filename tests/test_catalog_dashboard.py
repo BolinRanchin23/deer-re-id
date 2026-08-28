@@ -1,13 +1,20 @@
 import unittest
 from pathlib import Path
+from typing import Any, Callable, cast
 
+import reveal_downloader.catalog as catalog_module
 from reveal_downloader.catalog import (
     LIBRARY_DEADLINE_SECONDS,
+    SupabaseCatalog,
+    _mutation_error_response,
     _sanitize_photos,
+    _sanitize_profile_gallery,
     _sanitize_profiles,
     _sanitize_process_overview,
     _sign_aux_action_token,
+    _sign_hd_instance_action_token,
     handle_gate1b_label,
+    handle_hd_review_decision,
     handle_automation_label,
     handle_library,
     handle_library_preview,
@@ -19,7 +26,7 @@ from reveal_downloader.catalog import (
     handle_review,
 )
 from reveal_downloader.client import HDRequestRejected, RevealError
-from reveal_downloader.supabase import _postgrest_auth_headers
+from reveal_downloader.supabase import StorageError, StorageResponse, _postgrest_auth_headers
 
 
 class MemoryCatalog:
@@ -92,6 +99,14 @@ class MemoryCatalog:
                     "bbox": {"x": .1, "y": .2, "width": .5, "height": .6},
                     "crop_recipe": {"kind": "normalized_bbox"},
                     "is_representative": True,
+                }, {
+                    "media_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "media_asset_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    "hd_animal_instance_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                    "assignment_event_id": 72,
+                    "bbox": {"x": .2, "y": .1, "width": .4, "height": .7},
+                    "crop_recipe": {"kind": "normalized_bbox"},
+                    "is_representative": False,
                 }],
                 "representative_assignment_event_id": 71,
             }
@@ -178,10 +193,14 @@ class MemoryCatalog:
         }
 
     def read_automation_audit(self, limit=120):
-        return [{"automation_event_id": 8, "media_id": "11111111-1111-4111-8111-111111111111", "action": "auto_suppress_female", "captured_at": "2026-08-08T12:00:00Z", "camera_name": "North Ridge", "prediction": {"species_label": "whitetail", "visible_antler": "no", "probable_male": "no", "head_visibility": "full", "triage_class": "female_candidate", "reason": "clear antlerless deer"}, "human_verdict": None, "human_note": None}]
+        return [{"automation_event_id": 8, "media_id": "11111111-1111-4111-8111-111111111111", "action": "auto_suppress_female", "captured_at": "2026-08-08T12:00:00Z", "created_at": "2026-08-08T12:01:00Z", "camera_name": "North Ridge", "prediction": {"species_label": "whitetail", "visible_antler": "no", "probable_male": "no", "head_visibility": "full", "triage_class": "female_candidate", "reason": "clear antlerless deer"}, "human_verdict": None, "human_note": None}]
 
     def read_process_overview(self):
         return {"as_of":"2026-08-12T01:00:00Z","last_24_hours":{"from":"2026-08-11T01:00:00Z","to":"2026-08-12T01:00:00Z","photos_received":12,"male_or_antler":8,"animal_crops":5,"hd_requests":3,"profiles":2},"last_7_days":{"from":"2026-08-05T01:00:00Z","to":"2026-08-12T01:00:00Z","photos_received":120,"male_or_antler":80,"animal_crops":50,"hd_requests":30,"profiles":12}}
+
+    def read_pipeline_health(self):
+        stage = {"last_success_at":"2026-08-12T01:00:00Z","pending_count":0,"oldest_pending_at":None,"stale_claim_count":0,"failure_count_24h":0,"telemetry_complete":True}
+        return {"as_of":"2026-08-12T01:00:00Z","overall":"healthy","stages":{name:dict(stage) for name in ("ingestion","gate1","gate1b","hd_requests","hd_returns","hd_analysis","profiling")}}
 
     def query_all_photos(self, filters):
         self.photos_query = filters
@@ -192,7 +211,7 @@ class MemoryCatalog:
         return {"ok": True, "profile_id": profile_id, "assignment_event_id": assignment_event_id}
 
     def read_hd_review_queue(self, limit=60):
-        return [{"hd_review_result_id": 4, "media_id": "11111111-1111-4111-8111-111111111111", "media_asset_id": "66666666-6666-4666-8666-666666666666", "model_name": "Ollama-Gemma4-Vision-HD", "model_version": "hd-v1", "captured_at": "2026-08-08T12:00:00Z", "camera_name": "North Ridge", "result": {"species": "whitetail", "sex": "male", "animal_count": 1, "identity_eligible": True, "age_eligible": False, "age_class": "unknown", "antler_score_eligible": False, "antler_score_range": "unknown", "distinguishing_features": ["split brow"], "summary": "Useful identity image"}}]
+        return [{"hd_review_result_id": 4, "hd_animal_instance_id": "77777777-7777-4777-8777-777777777777", "media_id": "11111111-1111-4111-8111-111111111111", "media_asset_id": "66666666-6666-4666-8666-666666666666", "instance_index": 1, "instance_count": 1, "bbox": {"x": .1, "y": .2, "width": .4, "height": .5}, "detection_complete": True, "detection_notes": "one deer", "model_name": "Ollama-Gemma4-Vision-HD", "model_version": "hd-v1", "captured_at": "2026-08-08T12:00:00Z", "created_at": "2026-08-08T12:01:00Z", "camera_name": "North Ridge", "result": {"species": "whitetail", "sex": "male", "animal_count": 1, "identity_eligible": True, "age_eligible": False, "age_class": "unknown", "antler_score_eligible": False, "antler_score_range": "unknown", "distinguishing_features": ["split brow"], "summary": "Useful identity image"}}]
 
     def read_hd_review_progress(self):
         return {"total": 12, "completed": 5, "remaining": 7}
@@ -299,6 +318,143 @@ class MemoryCatalog:
 
 
 class PrivateLibraryTests(unittest.TestCase):
+    def test_on_demand_hd_queue_supports_bounded_location_scoped_refill(self):
+        raw_handler = getattr(catalog_module, "handle_hd_review_queue", None)
+        if not callable(raw_handler):
+            self.fail("handle_hd_review_queue is missing")
+        handler = cast(Callable[..., tuple[int, dict[str, Any]]], raw_handler)
+
+        class QueueCatalog(MemoryCatalog):
+            queue_args = None
+
+            def read_hd_review_queue_page(self, limit, camera_id=None, queue="active"):
+                type(self).queue_args = (limit, camera_id, queue)
+                item = dict(self.read_hd_review_queue(limit)[0])
+                item.update({"hd_animal_instance_id":"77777777-7777-4777-8777-777777777777","instance_index":1,"instance_count":1,"bbox":{"x":.1,"y":.2,"width":.4,"height":.5},"detection_complete":True,"detection_notes":"one deer","workflow_state":"detector_error","workflow_reason":"box_clipped","workflow_note":"left antler clipped"})
+                return {"items": [item], "has_more": False, "progress": {"total":1,"completed":0,"remaining":1,"profiling_ready":1,"deferred":0,"pending_confirmation":0,"detector_errors":0,"by_camera":{}}}
+
+        camera_id = "43611205-321c-4bd6-816d-1e92caaef1f4"
+        queue_catalog = QueueCatalog()
+        status, payload = handler(
+            self.environment(),
+            {"limit": "5", "camera_id": camera_id, "queue": "issues"},
+            catalog_factory=lambda *_: queue_catalog,
+            epoch_now=1_786_200_000,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertFalse(payload["has_more"])
+        self.assertEqual(QueueCatalog.queue_args, (6, camera_id, "issues"))
+        self.assertEqual(payload["items"][0]["workflow_reason"], "box_clipped")
+        self.assertEqual(payload["items"][0]["workflow_note"], "left antler clipped")
+
+    def test_hd_workflow_actions_are_durable_and_instance_scoped(self):
+        raw_handler = getattr(catalog_module, "handle_hd_review_workflow", None)
+        if not callable(raw_handler):
+            self.fail("handle_hd_review_workflow is missing")
+        handler = cast(Callable[..., tuple[int, dict[str, Any]]], raw_handler)
+
+        class WorkflowCatalog(MemoryCatalog):
+            recorded = None
+
+            def record_hd_review_workflow_action(self, result_id, instance_id, action, reason=None, note=""):
+                type(self).recorded = (result_id, instance_id, action, reason, note)
+                return {"ok": True, "state": action}
+
+        instance_id = "77777777-7777-4777-8777-777777777777"
+        token = _sign_hd_instance_action_token(4, instance_id, 1_786_200_100, b"preview-signing-secret-at-least-16")
+        workflow_catalog = WorkflowCatalog()
+        status, payload = handler(
+            self.environment(),
+            token,
+            instance_id,
+            "defer",
+            catalog_factory=lambda *_: workflow_catalog,
+            epoch_now=1_786_200_000,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(WorkflowCatalog.recorded, (4, instance_id, "defer", None, ""))
+        sibling_id = "99999999-9999-4999-8999-999999999999"
+        self.assertEqual(handler(self.environment(), token, sibling_id, "defer", catalog_factory=lambda *_: workflow_catalog, epoch_now=1_786_200_000)[0], 404)
+        self.assertEqual(handler(self.environment(), token, instance_id, [], catalog_factory=lambda *_: workflow_catalog, epoch_now=1_786_200_000)[0], 400)
+
+    def test_profile_match_enters_pending_confirmation_instead_of_confirming_immediately(self):
+        class ProposalCatalog(MemoryCatalog):
+            proposed = None
+
+            def propose_hd_profile_assignment(self, result_id, instance_id, action, **fields):
+                type(self).proposed = (result_id, instance_id, action, fields)
+                return {"ok": True, "pending_confirmation": True, "proposal_id": "88888888-8888-4888-8888-888888888888"}
+
+            def record_hd_review_decision(self, *_args, **_kwargs):
+                raise AssertionError("profile assignments must not confirm immediately")
+
+        instance_id = "77777777-7777-4777-8777-777777777777"
+        token = _sign_hd_instance_action_token(4, instance_id, 1_786_200_100, b"preview-signing-secret-at-least-16")
+        profile_id = "44444444-4444-4444-8444-444444444444"
+        proposal_catalog = ProposalCatalog()
+        status, payload = handle_hd_review_decision(
+            self.environment(), token, "match_profile", instance_id=instance_id,
+            profile_id=profile_id, catalog_factory=lambda *_: proposal_catalog,
+            epoch_now=1_786_200_000,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["pending_confirmation"])
+        self.assertIsNotNone(ProposalCatalog.proposed)
+        assert ProposalCatalog.proposed is not None
+        self.assertEqual(ProposalCatalog.proposed[0:3], (4, instance_id, "match_profile"))
+
+    def test_pending_profile_assignment_can_be_confirmed_or_undone_with_a_stale_safe_token(self):
+        raw_handler = getattr(catalog_module, "handle_hd_profile_assignment_review", None)
+        if not callable(raw_handler):
+            self.fail("handle_hd_profile_assignment_review is missing")
+        handler = cast(Callable[..., tuple[int, dict[str, Any]]], raw_handler)
+
+        class BufferCatalog(MemoryCatalog):
+            reviewed = None
+
+            def review_hd_profile_assignment(self, proposal_id, event_id, action):
+                type(self).reviewed = (proposal_id, event_id, action)
+                return {"ok": True, "confirmed": action == "confirm", "undone": action == "undo"}
+
+        proposal_id = "88888888-8888-4888-8888-888888888888"
+        token = _sign_aux_action_token(91, "proposal", 1_786_200_100, b"preview-signing-secret-at-least-16")
+        buffer_catalog = BufferCatalog()
+        status, payload = handler(
+            self.environment(), token, proposal_id, "undo",
+            catalog_factory=lambda *_: buffer_catalog, epoch_now=1_786_200_000,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["undone"])
+        self.assertEqual(BufferCatalog.reviewed, (proposal_id, 91, "undo"))
+
+    def test_geometry_correction_is_fenced_to_the_current_instance_revision(self):
+        raw_handler = getattr(catalog_module, "handle_hd_geometry_correction", None)
+        if not callable(raw_handler):
+            self.fail("handle_hd_geometry_correction is missing")
+        handler = cast(Callable[..., tuple[int, dict[str, Any]]], raw_handler)
+
+        class GeometryCatalog(MemoryCatalog):
+            corrected = None
+
+            def correct_hd_instance_bbox(self, result_id, instance_id, expected_event_id, bbox, reason, note=""):
+                type(self).corrected = (result_id, instance_id, expected_event_id, bbox, reason, note)
+                return {"ok": True, "geometry_event_id": 9, "bbox": bbox}
+
+        instance_id = "77777777-7777-4777-8777-777777777777"
+        token = _sign_hd_instance_action_token(4, instance_id, 1_786_200_100, b"preview-signing-secret-at-least-16")
+        geometry_catalog = GeometryCatalog()
+        bbox = {"x": .1, "y": .2, "width": .4, "height": .5}
+        status, payload = handler(
+            self.environment(), token, instance_id, None, bbox, "rebox",
+            catalog_factory=lambda *_: geometry_catalog, epoch_now=1_786_200_000,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(GeometryCatalog.corrected, (4, instance_id, None, bbox, "rebox", ""))
+
     def test_library_deadline_accommodates_full_operational_dashboard(self):
         self.assertGreaterEqual(LIBRARY_DEADLINE_SECONDS, 20)
 
@@ -344,6 +500,29 @@ class PrivateLibraryTests(unittest.TestCase):
         }
         with self.assertRaises(Exception):
             _sanitize_profiles(profiles, b"s" * 32, 1_700_000_000)
+
+    def test_every_profile_preview_is_returned_as_a_normalized_crop(self):
+        profile = _sanitize_profiles(MemoryCatalog().read_profiles(), b"s" * 32, 1_700_000_000)[0]
+        self.assertEqual(len(profile["profile_crops"]), 2)
+        self.assertTrue(all(crop["preview_url"].startswith("/api/library_preview?token=asset.") for crop in profile["profile_crops"]))
+        self.assertEqual(profile["profile_crops"][1]["bbox"]["x"], .2)
+
+    def test_profile_gallery_rejects_rows_without_identity_crop_geometry(self):
+        legacy = MemoryCatalog().read_profile_gallery_page("44444444-4444-4444-8444-444444444444")[0]
+        legacy.update({"assignment_event_id": None, "hd_animal_instance_id": None, "media_asset_id": None, "bbox": None})
+        with self.assertRaises(StorageError):
+            _sanitize_profile_gallery([legacy], b"s" * 32, 1_700_000_000)
+
+    def test_postgrest_mutation_error_preserves_bounded_conflict_detail(self):
+        class ErrorTransport:
+            def request(self, *_args, **_kwargs):
+                return StorageResponse(400, b'{"code":"P0001","message":"stale assignment proposal"}')
+
+        catalog = SupabaseCatalog("https://example.supabase.co", "s" * 32, transport=ErrorTransport())
+        with self.assertRaises(StorageError) as raised:
+            catalog._rpc("deerid_confirm_hd_profile_assignment", {})
+        self.assertIn("stale assignment proposal", str(raised.exception))
+        self.assertEqual(_mutation_error_response(raised.exception, "unavailable")[0], 409)
 
     def test_all_photos_query_validates_filters_and_returns_signed_page(self):
         catalog = MemoryCatalog()
@@ -420,6 +599,8 @@ class PrivateLibraryTests(unittest.TestCase):
         self.assertEqual(payload["stats"]["photos_received_24h"], 12)
         self.assertEqual(payload["stats"]["hd_requests_24h"], 3)
         self.assertEqual(payload["stats"]["hd_available_24h"], 2)
+        self.assertEqual(payload["pipeline_health"]["overall"], "healthy")
+        self.assertEqual(len(payload["pipeline_health"]["stages"]), 7)
         self.assertEqual(payload["automation_audit"][0]["action"], "auto_suppress_female")
         self.assertEqual(payload["hd_review_queue"][0]["result"]["identity_eligible"], True)
         self.assertRegex(payload["automation_audit"][0]["preview_url"], r"^/api/library_preview\?token=")
@@ -924,9 +1105,9 @@ class Gate1ReviewUiTests(unittest.TestCase):
         self.assertIn("limit 5", sql.lower())
         script = Path("public/app.js").read_text()
         html = Path("public/index.html").read_text()
-        self.assertIn("profile.representativeCrop", script)
-        self.assertIn("makeInstanceCrop(profile.representativeCrop", script)
-        self.assertIn("profile.preview_urls", script)
+        self.assertIn("profile.profileCrops", script)
+        self.assertIn("makeInstanceCrop(profileCrops[0]", script)
+        self.assertIn("profile.profile_crops", script)
         self.assertIn(".profile-thumbnail-strip.representative-photo", html)
         self.assertIn(".profile-representative-crop { width: 100%; height: 100%; aspect-ratio: auto !important", html)
         self.assertIn(".profile-representative-crop canvas { position: absolute; inset: 0; width: 100%; height: 100%", html)

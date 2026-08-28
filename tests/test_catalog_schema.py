@@ -67,6 +67,79 @@ class CatalogSchemaTests(unittest.TestCase):
         self.assertIn("status = 'submitted'", sql)
         self.assertIn("review_version is null", sql)
 
+    def test_profiling_queue_page_is_location_scoped_and_separates_deferred_items(self):
+        migration = Path("supabase/migrations/20260828023500_profiling_review_loop.sql")
+        self.assertTrue(migration.exists())
+        sql = migration.read_text().lower()
+        self.assertIn("deerid_hd_review_queue_page", sql)
+        self.assertIn("p_camera_id uuid", sql)
+        self.assertIn("p_queue text", sql)
+        self.assertIn("'active'", sql)
+        self.assertIn("'deferred'", sql)
+
+    def test_profiling_progress_is_instance_scoped_and_reports_each_buffer(self):
+        sql = Path("supabase/migrations/20260828023500_profiling_review_loop.sql").read_text().lower()
+        progress = sql.split("create or replace function public.deerid_hd_review_progress", 1)[1]
+        for field in ("profiling_ready", "deferred", "pending_confirmation", "detector_errors", "by_camera"):
+            self.assertIn(f"'{field}'", progress)
+        self.assertIn("e.hd_animal_instance_id=i.id", progress)
+        self.assertNotIn("assigned_i.media_asset_id", progress)
+
+    def test_profiling_workflow_actions_are_append_only_and_instance_scoped(self):
+        sql = Path("supabase/migrations/20260828023500_profiling_review_loop.sql").read_text().lower()
+        self.assertIn("create table deerid.hd_instance_review_events", sql)
+        self.assertIn("deerid_record_hd_review_workflow_action", sql)
+        self.assertIn("p_hd_animal_instance_id uuid", sql)
+        self.assertIn("p_hd_review_result_id bigint", sql)
+        self.assertIn("'detector_error'", sql)
+        self.assertIn("for update", sql)
+
+    def test_detector_issue_queue_carries_the_durable_reason_and_note(self):
+        sql = Path("supabase/migrations/20260828023500_profiling_review_loop.sql").read_text(encoding="utf-8").lower()
+        self.assertIn("workflow_reason", sql)
+        self.assertIn("workflow_note", sql)
+
+    def test_release_runbook_requires_migration_and_rpc_verification_before_vercel(self):
+        runbook = Path("docs/profiling-review-loop-release.md")
+        self.assertTrue(runbook.exists())
+        text = runbook.read_text(encoding="utf-8").lower()
+        self.assertLess(text.index("supabase db push"), text.index("vercel deploy"))
+        self.assertIn("deerid_pipeline_health", text)
+        self.assertIn("deerid_hd_review_queue_page", text)
+
+    def test_profile_gallery_excludes_legacy_rows_without_identity_crops(self):
+        sql = Path("supabase/migrations/20260828023500_profiling_review_loop.sql").read_text(encoding="utf-8").lower()
+        gallery = sql.split("create or replace function public.deerid_profile_gallery_page", 1)[1]
+        self.assertIn("and i.id is not null", gallery)
+
+    def test_profile_assignments_enter_an_append_only_confirmation_buffer(self):
+        sql = Path("supabase/migrations/20260828023500_profiling_review_loop.sql").read_text().lower()
+        self.assertIn("create table deerid.hd_profile_assignment_proposals", sql)
+        self.assertIn("create table deerid.hd_profile_assignment_proposal_events", sql)
+        self.assertIn("deerid_propose_hd_profile_assignment", sql)
+        self.assertIn("deerid_confirm_hd_profile_assignment", sql)
+        self.assertIn("deerid_undo_hd_profile_assignment", sql)
+        self.assertIn("'pending'", sql)
+        self.assertIn("'confirmed'", sql)
+        self.assertIn("'undone'", sql)
+
+    def test_box_corrections_preserve_original_geometry_and_append_revisions(self):
+        sql = Path("supabase/migrations/20260828023500_profiling_review_loop.sql").read_text().lower()
+        self.assertIn("create table deerid.hd_instance_geometry_events", sql)
+        self.assertIn("deerid_correct_hd_instance_bbox", sql)
+        self.assertIn("p_expected_geometry_event_id bigint", sql)
+        self.assertIn("bbox_x + bbox_width <= 1", sql)
+        self.assertIn("bbox_y + bbox_height <= 1", sql)
+        self.assertIn("geometry events are append-only", sql)
+
+    def test_pipeline_health_reports_every_authoritative_stage_and_telemetry_gap(self):
+        sql = Path("supabase/migrations/20260828023500_profiling_review_loop.sql").read_text().lower()
+        self.assertIn("deerid_pipeline_health", sql)
+        for stage in ("ingestion", "gate1", "gate1b", "hd_requests", "hd_returns", "hd_analysis", "profiling"):
+            self.assertIn(f"'{stage}'", sql)
+        for field in ("last_success_at", "pending_count", "oldest_pending_at", "stale_claim_count", "failure_count_24h", "telemetry_complete"):
+            self.assertIn(f"'{field}'", sql)
+
     def test_refresh_migrations_define_metrics_paged_photos_and_representatives(self):
         sql = "\n".join(path.read_text().lower() for path in MIGRATIONS.glob("20260812*site_refresh*.sql"))
         for required in ("deerid_process_overview", "deerid_all_photos", "profile_representative_events", "deerid_set_profile_representative", "p_camera_id", "p_cursor"):
@@ -89,12 +162,13 @@ class CatalogSchemaTests(unittest.TestCase):
         self.assertIn("action in ('assign','reassign')", sql)
         self.assertIn("order by e.created_at desc,e.id desc", sql)
 
-    def test_hd_queue_uses_latest_analysis_and_hides_resolved_or_profile_assigned_instances(self):
-        sql = (MIGRATIONS / "20260812180000_remove_classified_hd_assets_from_review.sql").read_text(encoding="utf-8").lower()
-        queue = sql.split("create or replace function public.deerid_hd_review_queue", 1)[1]
+    def test_hd_queue_uses_latest_analysis_and_hides_only_the_resolved_or_assigned_instance(self):
+        sql = (MIGRATIONS / "20260828023500_profiling_review_loop.sql").read_text(encoding="utf-8").lower()
+        queue = sql.split("create or replace function public.deerid_hd_review_queue_page", 1)[1]
         self.assertIn("distinct on (r.media_asset_id)", queue)
         self.assertIn("hd_instance_profile_assignment_events", queue)
-        self.assertIn("assigned_i.media_asset_id=r.media_asset_id", queue)
+        self.assertIn("e.hd_animal_instance_id=i.id", queue)
+        self.assertNotIn("assigned_i.media_asset_id=r.media_asset_id", queue)
         self.assertIn("d.action<>'defer'", queue)
 
     def test_gpt_rerun_claim_excludes_only_assets_classified_to_profiles(self):

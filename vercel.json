@@ -53,6 +53,22 @@
       "maxDuration": 10,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
     },
+    "api/hd_review_queue.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/hd_review_workflow.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/hd_profile_assignment_review.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
+    "api/hd_geometry_correction.py": {
+      "maxDuration": 10,
+      "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"
+    },
     "api/hd_analysis_trigger.py": {
       "maxDuration": 300,
       "excludeFiles": "{tests/**,custom_components/**,**/__pycache__/**}"

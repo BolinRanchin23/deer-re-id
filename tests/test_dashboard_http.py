@@ -55,11 +55,42 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         update = js.split("function updateCatalogViews", 1)[1].split("async function fetchLibrary", 1)[0]
         self.assertIn("if (target) target.textContent = value", update)
 
+    def test_big_picture_shows_stage_specific_pipeline_health(self):
+        html = Path("public/index.html").read_text()
+        js = Path("public/app.js").read_text()
+        self.assertIn('id="pipeline-health-body"', html)
+        self.assertIn("Pipeline health", html)
+        self.assertIn("function renderPipelineHealth", js)
+        for label in ("Ingestion", "Gate 1", "Gate 1B", "HD requests", "HD returns", "HD analysis", "Profiling"):
+            self.assertIn(label, js)
+        self.assertIn("Telemetry incomplete", js)
+
+    def test_entering_profiling_forces_an_authoritative_queue_page(self):
+        script = Path("public/app.js").read_text()
+        show_view = script.split("function showView(name)", 1)[1].split("function updateCatalogViews", 1)[0]
+        self.assertIn("if (name === 'hdreview') refillHDReviewQueue(true)", show_view)
+        fetch_library = script.split("async function fetchLibrary", 1)[1].split("async function refreshStatus", 1)[0]
+        self.assertNotIn("data.hd_review_queue", fetch_library)
+
+    def test_detector_issue_details_and_normalized_profile_crops_are_rendered(self):
+        script = Path("public/app.js").read_text()
+        self.assertIn("item.workflow_reason", script)
+        self.assertIn("item.workflow_note", script)
+        self.assertIn("profileCrops", script)
+        self.assertNotIn("profile.previewUrls||[]", script)
+
     def test_deer_cards_use_one_square_representative_photo(self):
         js = Path("public/app.js").read_text()
         html = Path("public/index.html").read_text()
-        self.assertIn("(profile.previewUrls || []).slice(0, 1)", js)
+        self.assertIn("(profile.profileCrops || []).slice(0, 1)", js)
+        self.assertIn("makeInstanceCrop", js)
         self.assertIn(".profile-thumbnail-strip { display: block; aspect-ratio: 1;", html)
+
+    def test_profile_gallery_has_no_raw_full_frame_fallback(self):
+        script = Path("public/app.js").read_text()
+        gallery = script.split("function renderProfileGalleryItems", 1)[1].split("async function openProfileGallery", 1)[0]
+        self.assertIn("makeInstanceCrop", gallery)
+        self.assertNotIn("createElement('img')", gallery)
 
     def test_all_photos_exposes_and_sends_extended_filters(self):
         js = Path("public/app.js").read_text()
@@ -71,6 +102,15 @@ class DashboardHttpAdapterTests(unittest.TestCase):
     def test_profiling_decision_decrements_selected_camera_progress(self):
         js = Path("public/app.js").read_text()
         self.assertIn("hdReviewProgress.by_camera[item.camera_id]", js)
+
+    def test_profiling_continuously_refills_from_the_authoritative_queue(self):
+        js = Path("public/app.js").read_text()
+        self.assertIn("async function refillHDReviewQueue", js)
+        refill = js.split("async function refillHDReviewQueue", 1)[1].split("function renderHDReview", 1)[0]
+        self.assertIn("/api/hd_review_queue?", refill)
+        self.assertIn("hdReviewQueue.some", refill)
+        decision = js.split("async function submitHDReviewDecision", 1)[1].split("function renderCameraCards", 1)[0]
+        self.assertIn("refillHDReviewQueue", decision)
 
     def test_status_library_and_preview_are_vercel_python_handlers(self):
         self.assertTrue(issubclass(StatusHandler, BaseHTTPRequestHandler))
@@ -174,6 +214,27 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         self.assertNotIn("create.textContent='+'", "".join(review.split()))
         self.assertNotIn("match.textContent='✎'", "".join(review.split()))
 
+    def test_profiling_separates_defer_and_detector_errors_from_identity_rejection(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        self.assertIn("Decide later", app_js)
+        self.assertIn("Report crop / detection issue", app_js)
+        self.assertIn("/api/hd_review_workflow", app_js)
+        self.assertIn("detector-error-dialog", html)
+        self.assertIn('data-hd-queue="deferred"', html)
+        self.assertIn("Deferred", html)
+
+    def test_new_profile_matches_wait_in_a_confirm_or_undo_buffer(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        self.assertIn('data-hd-queue="pending"', html)
+        self.assertIn("Pending confirmation", html)
+        self.assertIn("Confirm assignment", app_js)
+        self.assertIn("Undo and return to profiling", app_js)
+        self.assertIn("/api/hd_profile_assignment_review", app_js)
+        self.assertIn("pending-assignment-comparison", app_js)
+        self.assertIn("if(!data.pending_confirmation)", "".join(app_js.split()))
+
     def test_returned_hd_defaults_to_a_simple_decision_with_expandable_model_analysis(self):
         app_js = Path("public/app.js").read_text(encoding="utf-8")
         review = app_js.split("function renderHDReview", 1)[1].split("async function submitHDReviewDecision", 1)[0]
@@ -205,6 +266,29 @@ class DashboardHttpAdapterTests(unittest.TestCase):
         html = Path("public/index.html").read_text(encoding="utf-8")
         self.assertIn(".profile-picker-section", html)
         self.assertIn(".profile-picker-option", html)
+
+    def test_beginner_profile_picker_compares_query_crop_with_named_deer_images(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        picker = app_js.split("function openProfilePicker", 1)[1].split("function openCreateProfile", 1)[0]
+        self.assertIn("profile-compare-query", html)
+        self.assertIn("Compare with existing deer", html)
+        self.assertIn("makeInstanceCrop(item,'profile-compare-query-crop')", "".join(picker.split()))
+        self.assertIn("profile.profileCrops", picker)
+        self.assertIn("makeInstanceCrop(crop", picker)
+        self.assertIn("profile-compare-card", picker)
+
+    def test_crop_box_editor_supports_drag_resize_preview_and_stale_safe_save(self):
+        app_js = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        self.assertIn("Fix crop box", app_js)
+        self.assertIn("bbox-editor-dialog", html)
+        self.assertIn("bbox-editor-original", html)
+        self.assertIn("pointerdown", app_js)
+        self.assertIn("pointermove", app_js)
+        self.assertIn("bbox-editor-preview", html)
+        self.assertIn("/api/hd_geometry_correction", app_js)
+        self.assertIn("geometry_event_id", app_js)
 
     def test_returned_hd_review_is_scoped_to_one_animal_instance(self):
         html = Path("public/index.html").read_text(encoding="utf-8")
