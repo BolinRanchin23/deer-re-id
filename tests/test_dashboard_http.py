@@ -12,6 +12,11 @@ from api.profile_gallery import handler as ProfileGalleryHandler
 
 
 class DashboardHttpAdapterTests(unittest.TestCase):
+    def test_deep_linked_all_photos_loads_after_library_bootstrap(self):
+        app_js = Path("public/app.js").read_text()
+        initialize = app_js.split("async function initialize()", 1)[1].split("initialize();", 1)[0]
+        self.assertLess(initialize.index("await Promise.allSettled"), initialize.index("showView(requestedView"))
+
     def test_refreshed_information_architecture_and_workflows(self):
         html = Path("public/index.html").read_text()
         js = Path("public/app.js").read_text()

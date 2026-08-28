@@ -1207,10 +1207,10 @@ async function initialize() {
     renderReview(true);
   }));
   const requestedView = location.hash.slice(1);
-  showView(requestedView || 'overview');
   const results = await Promise.allSettled([refreshStatus(), fetchLibrary()]);
   const failures = results.filter(result => result.status === 'rejected');
   if (failures.length) showError(failures.map(result => result.reason.message).join(' '));
+  showView(requestedView || 'overview');
   $('loading-line').classList.add('done');
 }
 
